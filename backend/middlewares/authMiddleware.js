@@ -1,37 +1,63 @@
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
-module.exports = (req, res, next) => {
-  const token =
-    req.cookies?.token ||
-    (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")
-      ? req.headers.authorization.split(" ")[1]
-      : null);
-
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: "Access Denied: Authentication token missing"
-    });
-  }
-
+module.exports = async (req, res, next) => {
   try {
-    const secret = process.env.JWT_SECRET || "production_secure_multitenant_jwt_secret_key_2026";
-    const decoded = jwt.verify(token, secret);
+    let token = null;
 
-    // Tenant Isolation Check on User Tokens
-    if (decoded.tenantId && req.tenant && decoded.tenantId.toString() !== req.tenant._id.toString()) {
-      return res.status(403).json({
+    // 1. Check Authorization Bearer Header
+    if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith("Bearer ")
+    ) {
+      token = req.headers.authorization.split(" ")[1];
+    }
+    // 2. Check Signed / Regular Cookies
+    else if (req.cookies && req.cookies.token) {
+      token = req.cookies.token;
+    }
+    // 3. Fallback Header (x-auth-token)
+    else if (req.headers["x-auth-token"]) {
+      token = req.headers["x-auth-token"];
+    }
+
+    if (!token || token === "null" || token === "undefined") {
+      return res.status(401).json({
         success: false,
-        message: "Forbidden: You are not authorized for this specific tenant domain."
+        message: "Access Denied: Authentication token missing. Kripya login karein."
       });
     }
 
-    req.user = decoded; // { id, role, tenantId }
+    const secret =
+      process.env.JWT_SECRET ||
+      "production_secure_multitenant_jwt_secret_key_2026";
+
+    // Verify token
+    const decoded = jwt.verify(token, secret);
+
+    // Fetch user from database
+    const query = { _id: decoded.id };
+    if (req.tenant?._id) {
+      query.tenant = req.tenant._id;
+    }
+
+    const user = await User.findOne(query).select("-password");
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Session invalid ya user account nahi mila."
+      });
+    }
+
+    // Attach user to request
+    req.user = user;
     next();
   } catch (err) {
-    return res.status(403).json({
+    console.error("Auth Middleware Error:", err.message);
+    return res.status(401).json({
       success: false,
-      message: "Invalid or expired session token. Please log in again."
+      message: "Invalid ya expired token. Kripya dobara login karein."
     });
   }
 };

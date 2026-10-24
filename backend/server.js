@@ -36,7 +36,7 @@ connectDB();
 
 const app = express();
 
-// Trust Proxy for multi-tenant subdomains & reverse proxy (Nginx / Cloudflare)
+// Trust Proxy for multi-tenant subdomains & reverse proxy
 app.set("trust proxy", 1);
 
 // 1. Security Headers with Cross-Origin Resource Policy for Uploaded Images
@@ -60,14 +60,12 @@ const allowedHeadersList = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Mobile apps, Postman ya curl calls allow karein (origin undefined hota hai)
     if (!origin) return callback(null, true);
 
     try {
       const url = new URL(origin);
-      const host = url.hostname; // e.g. "tiwariji.localhost", "localhost", "sharmaji.localhost"
+      const host = url.hostname;
 
-      // Localhost aur kisi bhi *.localhost subdomain ko allow karein
       if (
         host === "localhost" ||
         host === "127.0.0.1" ||
@@ -77,7 +75,6 @@ const corsOptions = {
         return callback(null, true);
       }
 
-      // Production wildcard domain aur custom tenant domains ko allow karein
       return callback(null, true);
     } catch (err) {
       return callback(new Error("CORS validation failed"));
@@ -88,26 +85,33 @@ const corsOptions = {
   allowedHeaders: allowedHeadersList
 };
 
-// Global CORS Middleware handles both normal requests and preflight OPTIONS automatically
 app.use(cors(corsOptions));
 
-// 3. Rate Limiting (Brute-Force & DDoS Protection)
-const limiter = rateLimit({
+// 3. Rate Limiting (Relaxed for Development & High Dashboard Activity)
+const isDev = process.env.NODE_ENV !== "production";
+
+const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 250,
+  // Development me 3000 requests aur production me 1000 requests allow karein
+  max: isDev ? 3000 : 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
     message: "Too many requests from this IP. Please try again after 15 minutes."
-  }
+  },
+  // Development testing me polling ya localhost ko block na hone de
+  skip: (req) => isDev && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1")
 });
-app.use("/api", limiter);
+
+app.use("/api", generalLimiter);
 
 // 4. Body & Cookie Parsers
 app.use(express.json({ limit: "15kb" }));
 app.use(express.urlencoded({ extended: true, limit: "15kb" }));
 app.use(cookieParser());
 
-// 5. Express 5 Safe Mongo Sanitize (No direct req.query reassignment)
+// 5. Express 5 Safe Mongo Sanitize
 app.use((req, res, next) => {
   if (req.body) req.body = mongoSanitize.sanitize(req.body);
   if (req.params) req.params = mongoSanitize.sanitize(req.params);
@@ -121,7 +125,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// 6. Safe XSS Sanitizer (In-place string cleanup without mutating getters)
+// 6. Safe XSS Sanitizer
 const sanitizeString = (str) => {
   if (typeof str !== "string") return str;
   return str.replace(/[<>]/g, "");
@@ -148,10 +152,10 @@ app.use((req, res, next) => {
 // 7. Parameter Pollution Prevention
 app.use(hpp());
 
-// 8. Static Files Serving (Product images, logos & payment QR images)
+// 8. Static Files Serving
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// 9. Multi-Tenant Resolver Middleware (API requests ke liye tenant context set karega)
+// 9. Multi-Tenant Resolver Middleware
 app.use("/api/v1", tenantMiddleware);
 
 // 10. API Routes Mounting
@@ -170,7 +174,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "OK", timestamp: new Date() });
 });
 
-// 12. 404 Handler for Unhandled API Routes (Express 5 Safe Syntax)
+// 12. 404 Handler for Unhandled API Routes
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -196,7 +200,6 @@ app.listen(PORT, () => {
   console.log(`📁 Static files serving at: http://localhost:${PORT}/uploads`);
   console.log(`🔗 Multi-Tenant Support: Enabled for all subdomains & origins`);
 
-  // WhatsApp engine initialization wrapped safely
   try {
     if (whatsappService && typeof whatsappService.initializeWhatsApp === "function") {
       whatsappService.initializeWhatsApp(() => {
