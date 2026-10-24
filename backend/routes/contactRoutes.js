@@ -24,13 +24,10 @@ router.put(
   validate,
   cmsController.updateGeneralConfig
 );
-
-// Contact Cards CRUD
 router.post("/config/cards", adminAuth, cmsController.addCard);
 router.put("/config/cards/:cardId", adminAuth, cmsController.updateCard);
 router.delete("/config/cards/:cardId", adminAuth, cmsController.deleteCard);
 
-// FAQs CRUD
 router.post("/config/faqs", adminAuth, cmsController.addFaq);
 router.put("/config/faqs/:faqId", adminAuth, cmsController.updateFaq);
 router.delete("/config/faqs/:faqId", adminAuth, cmsController.deleteFaq);
@@ -38,6 +35,7 @@ router.delete("/config/faqs/:faqId", adminAuth, cmsController.deleteFaq);
 // 3. Admin CRM Ticket Controls
 router.get("/queries", adminAuth, crmController.getAllQueries);
 router.patch("/queries/:id", adminAuth, crmController.updateQueryStatus);
+router.delete("/queries/bulk-delete", adminAuth, crmController.bulkDeleteQueries); // Bulk Delete Endpoint
 router.delete("/queries/:id", adminAuth, crmController.deleteQuery);
 
 module.exports = router;

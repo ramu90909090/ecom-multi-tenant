@@ -1,44 +1,54 @@
 const express = require("express");
 const router = express.Router();
-const upload = require("../middlewares/upload");
+const multer = require("multer");
+const path = require("path");
+const productController = require("../controllers/productController");
 const authMiddleware = require("../middlewares/authMiddleware");
-const roleMiddleware = require("../middlewares/roleMiddleware");
-const { productValidationRules, validate } = require("../validators/productValidator");
-const {
-  getAllProducts,
-  getProductById,
-  createProduct,
-  updateProduct,
-  quickUpdateStock,
-  deleteProduct
-} = require("../controllers/productController");
 
-const adminAuth = [authMiddleware, roleMiddleware("admin")];
+// Multer Disk Storage Configuration
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/");
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, "product-" + uniqueSuffix + path.extname(file.originalname));
+  }
+});
 
-// 1. Public Storefront Endpoints
-router.get("/", getAllProducts);
-router.get("/:id", getProductById);
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith("image/")) {
+    cb(null, true);
+  } else {
+    cb(new Error("Sirf images upload karne ki permission hai!"), false);
+  }
+};
 
-// 2. Admin Inventory & Management Endpoints (Max 5 images allowed)
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
+
+// Routes
+router.get("/", productController.getAllProducts);
+router.get("/:id", productController.getProductById);
+
+// Admin Only Routes
 router.post(
   "/",
-  adminAuth,
-  upload.array("imageFiles", 5),
-  productValidationRules,
-  validate,
-  createProduct
+  authMiddleware,
+  upload.array("images", 5),
+  productController.createProduct
 );
 
 router.put(
   "/:id",
-  adminAuth,
-  upload.array("imageFiles", 5),
-  productValidationRules,
-  validate,
-  updateProduct
+  authMiddleware,
+  upload.array("images", 5),
+  productController.updateProduct
 );
 
-router.patch("/:id/stock", adminAuth, quickUpdateStock);
-router.delete("/:id", adminAuth, deleteProduct);
+router.delete("/:id", authMiddleware, productController.deleteProduct);
 
 module.exports = router;

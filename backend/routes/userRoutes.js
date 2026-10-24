@@ -4,10 +4,10 @@ const userController = require("../controllers/userController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const roleMiddleware = require("../middlewares/roleMiddleware");
 
-// Pure router par Admin Auth guard apply kiya gaya hai
+// Pure router ko Admin Guard se protect karein
 router.use(authMiddleware, roleMiddleware("admin"));
 
-// Admin CRM User Management (Tenant-Scoped)
+// User CRUD Endpoints
 router.get("/", userController.getAllUsers);
 router.post("/", userController.createUser);
 router.put("/:id", userController.updateUser);

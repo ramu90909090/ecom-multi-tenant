@@ -308,85 +308,179 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
+// ==========================================
+// GET ALL ORDERS (Admin CRM with Search, Filter & Pagination)
+// ==========================================
 exports.getAllOrders = async (req, res) => {
   try {
-    const tenantId = req.tenant._id;
-    const { search, orderStatus, paymentStatus, paymentMode, page = 1, limit = 10 } = req.query;
+    const tenantId = req.tenant?._id;
+    let query = tenantId ? { tenant: tenantId } : {};
 
-    let query = { tenant: tenantId };
+    const {
+      search,
+      orderStatus,
+      paymentStatus,
+      paymentMode,
+      sortBy = "createdAt-desc",
+      page = 1,
+      limit = 10
+    } = req.query;
 
+    // 1. Search across Order ID, UTR Number, Customer Name, Phone, and Email
     if (search && search.trim()) {
       const regex = { $regex: search.trim(), $options: "i" };
       query.$or = [
         { orderId: regex },
+        { "paymentInfo.utrNumber": regex },
         { "shippingDetails.name": regex },
         { "shippingDetails.phone": regex },
-        { "shippingDetails.email": regex },
-        { "paymentInfo.utrNumber": regex }
+        { "shippingDetails.email": regex }
       ];
     }
 
-    if (orderStatus && orderStatus !== "All") query.orderStatus = orderStatus;
-    if (paymentStatus && paymentStatus !== "All") query["paymentInfo.status"] = paymentStatus;
-    if (paymentMode && paymentMode !== "All") query["paymentInfo.mode"] = paymentMode;
+    // 2. Status Filters
+    if (orderStatus && orderStatus !== "All") {
+      query.orderStatus = orderStatus;
+    }
+    if (paymentStatus && paymentStatus !== "All") {
+      query["paymentInfo.status"] = paymentStatus;
+    }
+    if (paymentMode && paymentMode !== "All") {
+      query["paymentInfo.mode"] = paymentMode;
+    }
 
-    const currentPage = Number(page);
-    const perPage = Number(limit);
+    // 3. Sorting
+    let sortOptions = { createdAt: -1 };
+    if (sortBy === "oldest") sortOptions = { createdAt: 1 };
+    else if (sortBy === "amount-high") sortOptions = { "pricing.totalPayable": -1 };
+    else if (sortBy === "amount-low") sortOptions = { "pricing.totalPayable": 1 };
+
+    // 4. Pagination (10, 25, 50, 100)
+    const currentPage = Math.max(1, parseInt(page, 10) || 1);
+    const perPage = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (currentPage - 1) * perPage;
 
-    const [orders, totalOrders] = await Promise.all([
-      Order.find(query).populate("user", "name email").sort({ createdAt: -1 }).skip(skip).limit(perPage),
-      Order.countDocuments(query)
-    ]);
+    // 5. Query execution and Metrics Stats
+    const [orders, totalOrders, pendingCount, deliveredCount, revenueStats] =
+      await Promise.all([
+        Order.find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(perPage),
+        Order.countDocuments(query),
+        Order.countDocuments({ ...query, orderStatus: { $in: ["Pending", "Processing", "Shipped"] } }),
+        Order.countDocuments({ ...query, orderStatus: "Delivered" }),
+        Order.aggregate([
+          { $match: { ...query, "paymentInfo.status": "Verified" } },
+          { $group: { _id: null, total: { $sum: "$pricing.totalPayable" } } }
+        ])
+      ]);
 
-    const [totalRevenueData, pendingOrdersCount, deliveredOrdersCount] = await Promise.all([
-      Order.aggregate([
-        { $match: { tenant: tenantId, "paymentInfo.status": "Verified" } },
-        { $group: { _id: null, total: { $sum: "$pricing.totalPayable" } } }
-      ]),
-      Order.countDocuments({ tenant: tenantId, orderStatus: "Pending" }),
-      Order.countDocuments({ tenant: tenantId, orderStatus: "Delivered" })
-    ]);
+    const totalPages = Math.ceil(totalOrders / perPage) || 1;
+    const verifiedRevenue = revenueStats[0]?.total || 0;
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
+      count: orders.length,
       data: orders,
       pagination: {
         total: totalOrders,
-        totalPages: Math.ceil(totalOrders / perPage) || 1,
-        currentPage,
-        limit: perPage
+        page: currentPage,
+        limit: perPage,
+        totalPages
       },
       stats: {
         totalOrders,
-        totalRevenue: totalRevenueData[0]?.total || 0,
-        pendingOrders: pendingOrdersCount,
-        deliveredOrders: deliveredOrdersCount
+        pendingOrders: pendingCount,
+        deliveredOrders: deliveredCount,
+        totalRevenue: verifiedRevenue
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("getAllOrders Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 exports.deleteOrder = async (req, res) => {
   try {
-    const tenantId = req.tenant._id;
-    const order = await Order.findOne({ _id: req.params.id, tenant: tenantId });
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    const tenantId = req.tenant?._id;
+    const query = { _id: req.params.id };
+    if (tenantId) query.tenant = tenantId;
 
-    if (order.stockDeducted) {
+    const order = await Order.findOne(query);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order nahi mila." });
+    }
+
+    // Agar order verified tha aur stock deduct hua tha, toh delete se pehle stock restore karein
+    if (order.stockDeducted && order.items && order.items.length > 0) {
       for (const item of order.items) {
-        await Product.findOneAndUpdate(
-          { _id: item.product, tenant: tenantId },
-          { $inc: { stock: item.quantity } }
-        );
+        if (item.product) {
+          await Product.findByIdAndUpdate(item.product, {
+            $inc: { stock: item.quantity }
+          });
+        }
       }
     }
 
-    await Order.findOneAndDelete({ _id: req.params.id, tenant: tenantId });
-    res.status(200).json({ success: true, message: "Order deleted successfully" });
+    await Order.findByIdAndDelete(order._id);
+    return res.status(200).json({
+      success: true,
+      message: `Order #${order.orderId} safaltapoorvak delete ho gaya!`
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("deleteOrder Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// =========================================================================
+// 2. BULK DELETE ORDERS (Multiple IDs ya All Rejected/Cancelled Orders)
+// =========================================================================
+exports.bulkDeleteOrders = async (req, res) => {
+  try {
+    const tenantId = req.tenant?._id;
+    const { orderIds, deleteAllRejected } = req.body;
+
+    let deleteFilter = {};
+    if (tenantId) deleteFilter.tenant = tenantId;
+
+    if (deleteAllRejected) {
+      // Saare rejected payment wale orders ko target karein
+      deleteFilter["paymentInfo.status"] = "Rejected";
+    } else if (Array.isArray(orderIds) && orderIds.length > 0) {
+      deleteFilter._id = { $in: orderIds };
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Delete karne ke liye order IDs provide karein."
+      });
+    }
+
+    // Pehle matched orders fetch karein taaki agar kisi ka stock deducted ho toh restore ho sake
+    const ordersToDelete = await Order.find(deleteFilter);
+
+    for (const order of ordersToDelete) {
+      if (order.stockDeducted && order.items) {
+        for (const item of order.items) {
+          if (item.product) {
+            await Product.findByIdAndUpdate(item.product, {
+              $inc: { stock: item.quantity }
+            });
+          }
+        }
+      }
+    }
+
+    const result = await Order.deleteMany(deleteFilter);
+
+    return res.status(200).json({
+      success: true,
+      message: `${result.deletedCount} orders safaltapoorvak delete kar diye gaye!`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    console.error("bulkDeleteOrders Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

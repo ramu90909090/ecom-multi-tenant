@@ -7,20 +7,36 @@ const {
   getAllOrders,
   getMyOrders,
   updateOrderStatus,
-  deleteOrder
+  deleteOrder,
+  bulkDeleteOrders
 } = require("../controllers/orderController");
 
+// Admin Security Middleware Array
 const adminAuth = [authMiddleware, roleMiddleware("admin")];
 
-// 1. Public Order Placement
+// ==========================================
+// 1. PUBLIC ORDER PLACEMENT
+// ==========================================
 router.post("/", createOrder);
 
-// 2. Logged-in Customer Specific Orders
+// ==========================================
+// 2. LOGGED-IN CUSTOMER ORDERS
+// ==========================================
 router.get("/my-orders", authMiddleware, getMyOrders);
 
-// 3. Admin Orders CRM Endpoints
+// ==========================================
+// 3. ADMIN ORDERS CRM (Role Protected)
+// ==========================================
+// A. Get All Orders with Search, Filters & Pagination (10, 25, 50, 100)
 router.get("/", adminAuth, getAllOrders);
+
+// B. Bulk Delete (Must be declared BEFORE /:id route)
+router.delete("/bulk-delete", adminAuth, bulkDeleteOrders);
+
+// C. Update Order Delivery & Payment Status
 router.put("/:id", adminAuth, updateOrderStatus);
+
+// D. Delete Single Order
 router.delete("/:id", adminAuth, deleteOrder);
 
 module.exports = router;

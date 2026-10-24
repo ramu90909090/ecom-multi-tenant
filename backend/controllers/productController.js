@@ -1,247 +1,293 @@
 const Product = require("../models/Product");
-const fs = require("fs");
-const path = require("path");
 
-const removeLocalFiles = (imagePaths = []) => {
-  if (!Array.isArray(imagePaths)) return;
-  imagePaths.forEach((imgUrl) => {
-    if (imgUrl && imgUrl.startsWith("/uploads/products/")) {
-      const filePath = path.join(__dirname, "..", imgUrl);
-      if (fs.existsSync(filePath)) {
-        fs.unlink(filePath, (err) => {
-          if (err) console.error("File deletion error:", err);
-        });
-      }
+// ==========================================
+// 1. CREATE PRODUCT (Tenant Scoped)
+// ==========================================
+exports.createProduct = async (req, res) => {
+  try {
+    const tenantId = req.tenant?._id;
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant store identify nahi ho saka. Request header me store slug missing hai."
+      });
     }
-  });
+
+    const {
+      name,
+      description,
+      price,
+      actualPrice,
+      discount,
+      category,
+      stock,
+      isTrending
+    } = req.body;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: "Product Name required hai." });
+    }
+    if (!price || isNaN(Number(price))) {
+      return res.status(400).json({ success: false, message: "Valid Base Price enter karein." });
+    }
+    if (!category || !category.trim()) {
+      return res.status(400).json({ success: false, message: "Category select karna zaroori hai." });
+    }
+
+    // Process Multer Uploaded Files
+    let imagePaths = [];
+    if (req.files && req.files.length > 0) {
+      imagePaths = req.files.map((file) => `/uploads/${file.filename}`);
+    } else if (req.body.imageUrl && typeof req.body.imageUrl === "string") {
+      imagePaths = [req.body.imageUrl.trim()];
+    }
+
+    if (imagePaths.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Kam se kam ek product image upload karein."
+      });
+    }
+
+    const parsedPrice = Number(price);
+    const parsedActualPrice = actualPrice ? Number(actualPrice) : parsedPrice;
+    const parsedDiscount = discount ? Number(discount) : 0;
+    const finalPrice =
+      parsedDiscount > 0
+        ? Math.round(parsedPrice - (parsedPrice * parsedDiscount) / 100)
+        : parsedPrice;
+
+    // Create Document
+    const newProduct = await Product.create({
+      tenant: tenantId,
+      name: name.trim(),
+      description: description ? description.trim() : "Genuine store product.",
+      price: parsedPrice,
+      actualPrice: parsedActualPrice,
+      discount: parsedDiscount,
+      finalPrice: finalPrice,
+      category: category.trim(),
+      stock: stock ? Number(stock) : 10,
+      images: imagePaths, // Pure [String] array for schema compatibility
+      image: imagePaths[0],
+      isTrending: isTrending === "true" || isTrending === true
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Product successfully add ho gaya!",
+      data: newProduct
+    });
+  } catch (error) {
+    console.error("Create Product Error:", error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Database validation failed while inserting product."
+    });
+  }
 };
 
+// ==========================================
+// 2. GET ALL PRODUCTS
+// ==========================================
 exports.getAllProducts = async (req, res) => {
   try {
-    const tenantId = req.tenant._id;
-    const { category, search, minRating, maxPrice, sortBy, trending, includeOutOfStock } = req.query;
+    const tenantId = req.tenant?._id;
+    const query = tenantId ? { tenant: tenantId } : {};
 
-    let query = { tenant: tenantId };
-
-    if (includeOutOfStock !== "true") {
-      query.stock = { $gt: 0 };
-    }
-    if (category && category !== "All") {
-      query.category = category;
-    }
-    if (search) {
+    const { category, search, sortBy } = req.query;
+    if (category && category !== "All") query.category = category;
+    if (search && search.trim()) {
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { category: { $regex: search, $options: "i" } }
+        { name: { $regex: search.trim(), $options: "i" } },
+        { category: { $regex: search.trim(), $options: "i" } }
       ];
     }
-    if (minRating) query.rating = { $gte: Number(minRating) };
-    if (maxPrice) query.price = { $lte: Number(maxPrice) };
-    if (trending === "true") query.$or = [{ isTrending: true }, { rating: { $gte: 4.5 } }];
 
     let productsQuery = Product.find(query);
 
     if (sortBy === "price-low") productsQuery = productsQuery.sort({ price: 1 });
     else if (sortBy === "price-high") productsQuery = productsQuery.sort({ price: -1 });
-    else if (sortBy === "rating") productsQuery = productsQuery.sort({ rating: -1 });
-    else if (sortBy === "stock-low") productsQuery = productsQuery.sort({ stock: 1 });
     else if (sortBy === "discount") productsQuery = productsQuery.sort({ discount: -1 });
     else productsQuery = productsQuery.sort({ createdAt: -1 });
 
     const products = await productsQuery;
-    res.status(200).json({ success: true, count: products.length, data: products });
+    return res.status(200).json({ success: true, count: products.length, data: products });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// ==========================================
+// 3. GET SINGLE PRODUCT
+// ==========================================
 exports.getProductById = async (req, res) => {
   try {
-    const product = await Product.findOne({ _id: req.params.id, tenant: req.tenant._id });
-    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
-    res.status(200).json({ success: true, data: product });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-exports.createProduct = async (req, res) => {
-  let uploadedFiles = [];
-  try {
-    const tenantId = req.tenant._id;
-    const {
-      name,
-      category,
-      price,
-      discount,
-      stock,
-      rating,
-      isTrending,
-      isRecent,
-      description,
-      existingUrls
-    } = req.body;
-
-    let finalImages = [];
-
-    if (existingUrls) {
-      try {
-        const parsed = typeof existingUrls === "string" ? JSON.parse(existingUrls) : existingUrls;
-        if (Array.isArray(parsed)) finalImages.push(...parsed.filter((u) => u && u.trim()));
-      } catch {
-        if (typeof existingUrls === "string" && existingUrls.trim()) {
-          finalImages.push(existingUrls.trim());
-        }
-      }
-    }
-
-    if (req.files && req.files.length > 0) {
-      uploadedFiles = req.files.map((file) => `/uploads/products/${file.filename}`);
-      finalImages.push(...uploadedFiles);
-    }
-
-    if (finalImages.length < 3 || finalImages.length > 5) {
-      removeLocalFiles(uploadedFiles);
-      return res.status(400).json({
-        success: false,
-        message: `Kam se kam 3 aur jyada se jyada 5 images honi chahiye. Aapne ${finalImages.length} images di hain.`
-      });
-    }
-
-    const newProduct = await Product.create({
-      tenant: tenantId,
-      name,
-      category,
-      price: Number(price),
-      discount: discount ? Number(discount) : 0,
-      stock: stock !== undefined ? Number(stock) : 10,
-      rating: rating ? Number(rating) : 4.0,
-      isTrending: isTrending === "true" || isTrending === true,
-      isRecent: isRecent === "true" || isRecent === true,
-      description,
-      images: finalImages
-    });
-
-    res.status(201).json({
-      success: true,
-      message: "Product created successfully",
-      data: newProduct
-    });
-  } catch (error) {
-    removeLocalFiles(uploadedFiles);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-exports.updateProduct = async (req, res) => {
-  let uploadedFiles = [];
-  try {
-    const tenantId = req.tenant._id;
-    const product = await Product.findOne({ _id: req.params.id, tenant: tenantId });
+    const product = await Product.findById(req.params.id);
     if (!product) {
-      if (req.files) removeLocalFiles(req.files.map((f) => `/uploads/products/${f.filename}`));
-      return res.status(404).json({ success: false, message: "Product not found" });
+      return res.status(404).json({ success: false, message: "Product nahi mila." });
+    }
+    return res.status(200).json({ success: true, data: product });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==========================================
+// 4. UPDATE PRODUCT
+// ==========================================
+exports.updateProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product nahi mila." });
     }
 
-    const {
-      name,
-      category,
-      price,
-      discount,
-      stock,
-      rating,
-      isTrending,
-      isRecent,
-      description,
-      keptImages
-    } = req.body;
+    const { name, description, price, actualPrice, discount, category, stock, isTrending, existingImages } = req.body;
 
     let finalImages = [];
-
-    if (keptImages) {
+    if (existingImages) {
       try {
-        const parsed = typeof keptImages === "string" ? JSON.parse(keptImages) : keptImages;
-        if (Array.isArray(parsed)) finalImages.push(...parsed);
-      } catch {
-        finalImages.push(keptImages);
+        const parsed = typeof existingImages === "string" ? JSON.parse(existingImages) : existingImages;
+        if (Array.isArray(parsed)) {
+          finalImages = parsed.map((img) => (typeof img === "object" ? img.url : img));
+        }
+      } catch (e) {
+        // fallback
       }
     }
 
     if (req.files && req.files.length > 0) {
-      uploadedFiles = req.files.map((file) => `/uploads/products/${file.filename}`);
-      finalImages.push(...uploadedFiles);
+      const newUrls = req.files.map((file) => `/uploads/${file.filename}`);
+      finalImages.push(...newUrls);
     }
 
-    if (finalImages.length < 3 || finalImages.length > 5) {
-      removeLocalFiles(uploadedFiles);
-      return res.status(400).json({
-        success: false,
-        message: `Total images 3 se 5 ke beech honi chahiye. Abhi ${finalImages.length} images hain.`
-      });
+    if (finalImages.length === 0 && product.images) {
+      finalImages = product.images;
     }
 
-    const removedFromDisk = (product.images || []).filter((oldImg) => !finalImages.includes(oldImg));
-    removeLocalFiles(removedFromDisk);
+    const parsedPrice = price !== undefined ? Number(price) : product.price;
+    const parsedDiscount = discount !== undefined ? Number(discount) : product.discount;
+    const finalPrice =
+      parsedDiscount > 0
+        ? Math.round(parsedPrice - (parsedPrice * parsedDiscount) / 100)
+        : parsedPrice;
 
-    const updated = await Product.findOneAndUpdate(
-      { _id: req.params.id, tenant: tenantId },
+    const updated = await Product.findByIdAndUpdate(
+      req.params.id,
       {
-        name,
-        category,
-        price: Number(price),
-        discount: Number(discount),
+        name: name ? name.trim() : product.name,
+        description: description ? description.trim() : product.description,
+        price: parsedPrice,
+        actualPrice: actualPrice !== undefined ? Number(actualPrice) : parsedPrice,
+        discount: parsedDiscount,
+        finalPrice,
+        category: category ? category.trim() : product.category,
         stock: stock !== undefined ? Number(stock) : product.stock,
-        rating: Number(rating),
         isTrending: isTrending === "true" || isTrending === true,
-        isRecent: isRecent === "true" || isRecent === true,
-        description,
-        images: finalImages
+        images: finalImages,
+        image: finalImages[0] || product.image
       },
       { new: true, runValidators: true }
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Product updated successfully",
+      message: "Product updated successfully!",
       data: updated
     });
   } catch (error) {
-    removeLocalFiles(uploadedFiles);
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
-exports.quickUpdateStock = async (req, res) => {
-  try {
-    const { stock } = req.body;
-    if (stock === undefined || Number(stock) < 0) {
-      return res.status(400).json({ success: false, message: "Valid stock number required" });
-    }
-
-    const product = await Product.findOneAndUpdate(
-      { _id: req.params.id, tenant: req.tenant._id },
-      { stock: Number(stock) },
-      { new: true }
-    );
-
-    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
-
-    res.status(200).json({ success: true, message: "Stock updated successfully", data: product });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
+// ==========================================
+// 5. DELETE PRODUCT
+// ==========================================
 exports.deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findOne({ _id: req.params.id, tenant: req.tenant._id });
-    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product nahi mila." });
+    }
 
-    removeLocalFiles(product.images);
-    await Product.findOneAndDelete({ _id: req.params.id, tenant: req.tenant._id });
-
-    res.status(200).json({ success: true, message: "Product deleted successfully" });
+    await Product.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ success: true, message: "Product successfully delete ho gaya." });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// server/controllers/productController.js ke getAllProducts function ko update karein:
+exports.getAllProducts = async (req, res) => {
+  try {
+    const tenantId = req.tenant?._id;
+    const query = tenantId ? { tenant: tenantId } : {};
+
+    const {
+      category,
+      search,
+      stockStatus,
+      sortBy = "createdAt-desc",
+      page = 1,
+      limit = 10
+    } = req.query;
+
+    // 1. Category Filter
+    if (category && category !== "All") {
+      query.category = category;
+    }
+
+    // 2. Search Query (Name or Description)
+    if (search && search.trim()) {
+      query.$or = [
+        { name: { $regex: search.trim(), $options: "i" } },
+        { description: { $regex: search.trim(), $options: "i" } }
+      ];
+    }
+
+    // 3. Stock Status Filter
+    if (stockStatus === "inStock") {
+      query.stock = { $gt: 0 };
+    } else if (stockStatus === "outOfStock") {
+      query.stock = { $lte: 0 };
+    }
+
+    // 4. Sorting Logic
+    let sortOptions = { createdAt: -1 };
+    if (sortBy === "price-low") sortOptions = { price: 1 };
+    else if (sortBy === "price-high") sortOptions = { price: -1 };
+    else if (sortBy === "name-asc") sortOptions = { name: 1 };
+    else if (sortBy === "stock-low") sortOptions = { stock: 1 };
+    else if (sortBy === "discount-high") sortOptions = { discount: -1 };
+
+    // 5. Pagination Calculation
+    const currentPage = Math.max(1, parseInt(page, 10) || 1);
+    const perPage = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const skip = (currentPage - 1) * perPage;
+
+    const totalProducts = await Product.countDocuments(query);
+    const totalPages = Math.ceil(totalProducts / perPage) || 1;
+
+    const products = await Product.find(query)
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(perPage);
+
+    return res.status(200).json({
+      success: true,
+      count: products.length,
+      data: products,
+      pagination: {
+        total: totalProducts,
+        page: currentPage,
+        limit: perPage,
+        totalPages
+      }
+    });
+  } catch (error) {
+    console.error("getAllProducts Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
