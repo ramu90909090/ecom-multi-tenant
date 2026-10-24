@@ -5,12 +5,13 @@ const fs = require("fs");
 
 let client = null;
 let qrCodeData = "";
-let clientStatus = "DISCONNECTED";
+let clientStatus = "DISCONNECTED"; // DISCONNECTED | RECONNECTING | QR_READY | READY | AUTH_FAILURE
 let connectedAdminNumber = "";
 let readyCallback = null;
 
 const sessionPath = path.join(__dirname, "../.wwebjs_auth");
 
+// 1. Initialize WhatsApp Client
 const initializeWhatsApp = (onReadyCallback) => {
   if (onReadyCallback) readyCallback = onReadyCallback;
 
@@ -22,33 +23,29 @@ const initializeWhatsApp = (onReadyCallback) => {
     }
   }
 
-client = new Client({
-  authStrategy: new LocalAuth({
-    dataPath: sessionPath
-  }),
-  // ✅ YEH LINE ADD KAREIN (Fixes "Cannot read properties of null (reading 'Socket')"):
-  webVersionCache: {
-    type: "remote",
-    remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-js/main/dist/wppconnect-wa.js",
-  },
-  puppeteer: {
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-accelerated-2d-canvas",
-      "--no-first-run",
-      "--no-zygote",
-      "--disable-gpu"
-    ]
-  }
-});
+  client = new Client({
+    authStrategy: new LocalAuth({
+      dataPath: sessionPath
+    }),
+    puppeteer: {
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--disable-gpu"
+      ]
+    }
+  });
+
   client.on("qr", async (qr) => {
     try {
       qrCodeData = await qrcode.toDataURL(qr);
       clientStatus = "QR_READY";
-      console.log("📲 New WhatsApp QR Code generated.");
+      console.log("📲 New WhatsApp QR Code generated for scanning.");
     } catch (err) {
       console.error("QR Generation error:", err);
     }
@@ -57,17 +54,20 @@ client = new Client({
   client.on("ready", () => {
     clientStatus = "READY";
     qrCodeData = "";
+
     if (client.info && client.info.wid && client.info.wid.user) {
       connectedAdminNumber = client.info.wid.user;
       console.log(`✅ WhatsApp Connected! Admin Number: ${connectedAdminNumber}`);
     } else {
-      console.log("✅ WhatsApp Web connected!");
+      console.log("✅ WhatsApp Web is connected!");
     }
+
     if (readyCallback) readyCallback();
   });
 
   client.on("authenticated", () => {
     clientStatus = "AUTHENTICATED";
+    console.log("🔒 WhatsApp Authenticated successfully.");
   });
 
   client.on("auth_failure", (msg) => {
@@ -83,8 +83,10 @@ client = new Client({
     qrCodeData = "";
     connectedAdminNumber = "";
 
+    // Automatic reconnect attempt with existing session after 8 seconds
     if (reason !== "LOGOUT") {
       clientStatus = "RECONNECTING";
+      console.log("🔄 Auto-reconnecting to existing saved session in 8 seconds...");
       setTimeout(() => {
         initializeWhatsApp(readyCallback);
       }, 8000);
@@ -97,6 +99,7 @@ client = new Client({
   });
 };
 
+// 2. Reconnect using existing session credentials
 const reconnectExistingSession = async () => {
   clientStatus = "RECONNECTING";
   qrCodeData = "";
@@ -104,6 +107,7 @@ const reconnectExistingSession = async () => {
   return { success: true, message: "Attempting reconnect with existing session" };
 };
 
+// 3. Reset & Start Brand New Session (Deletes Auth cache folder)
 const resetAndStartNewSession = async () => {
   clientStatus = "RECONNECTING";
   connectedAdminNumber = "";
@@ -112,21 +116,28 @@ const resetAndStartNewSession = async () => {
   if (client) {
     try {
       await client.logout();
-    } catch (e) {}
+    } catch (e) {
+      console.log("Client logout skipped/already offline.");
+    }
     try {
       await client.destroy();
-    } catch (e) {}
+    } catch (e) {
+      console.log("Client destroy skipped.");
+    }
     client = null;
   }
 
+  // Purana session data folder delete karein
   if (fs.existsSync(sessionPath)) {
     try {
       fs.rmSync(sessionPath, { recursive: true, force: true });
+      console.log("🗑️ Deleted old .wwebjs_auth session folder.");
     } catch (err) {
-      console.error("Failed to delete session folder:", err);
+      console.error("Failed to delete old session folder:", err);
     }
   }
 
+  // Naya client shuru karein (Fresh QR generate hoga)
   setTimeout(() => {
     initializeWhatsApp(readyCallback);
   }, 1500);
@@ -134,14 +145,19 @@ const resetAndStartNewSession = async () => {
   return { success: true, message: "Old session cleared. Fresh QR code will be generated." };
 };
 
+// 4. Manual Disconnect / Logout
 const disconnectClient = async () => {
   if (client) {
     try {
       await client.logout();
-    } catch (e) {}
+    } catch (e) {
+      console.log("Logout warning:", e.message);
+    }
     try {
       await client.destroy();
-    } catch (e) {}
+    } catch (e) {
+      console.log("Destroy warning:", e.message);
+    }
     client = null;
   }
   clientStatus = "DISCONNECTED";

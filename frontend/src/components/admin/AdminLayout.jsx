@@ -9,13 +9,13 @@ import {
   Info,
   Layers,
   MessageSquare,
+  QrCode,
   MessageSquareText,
   ChevronLeft,
   ChevronRight,
   Menu,
   X,
   Sparkles,
-  ExternalLink,
   Store
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
@@ -27,17 +27,18 @@ export default function AdminLayout() {
   const { user } = useAuth();
   const { tenant } = useSettings();
 
-  // All 9 Admin Navigation Modules
+  // Sabhi Admin Navigation Modules (WhatsApp QR Scanner & Logs dono shamil hain)
   const navItems = [
     { label: "Dashboard", to: "/admin/dashboard", icon: LayoutDashboard },
     { label: "Products Catalog", to: "/admin/products", icon: Package },
     { label: "Orders & Delivery", to: "/admin/orders", icon: ShoppingCart },
     { label: "Customer Accounts", to: "/admin/users", icon: Users },
+    { label: "WhatsApp QR Scanner", to: "/admin/whatsapp-qr", icon: QrCode },
+    { label: "WhatsApp Logs & Queue", to: "/admin/whatsapp", icon: MessageSquareText },
+    { label: "Contact CRM Tickets", to: "/admin/contact-inquiries", icon: MessageSquare },
     { label: "Header, Footer & QR", to: "/admin/header-footer-cms", icon: Sliders },
     { label: "About Us CMS", to: "/admin/about-cms", icon: Info },
-    { label: "Contact Us CMS", to: "/admin/contact-cms", icon: Layers },
-    { label: "Contact CRM Tickets", to: "/admin/contact-inquiries", icon: MessageSquare },
-    { label: "WhatsApp Logs & Queue", to: "/admin/whatsapp", icon: MessageSquareText }
+    { label: "Contact Us CMS", to: "/admin/contact-cms", icon: Layers }
   ];
 
   const getLinkClasses = ({ isActive }) =>
@@ -64,7 +65,7 @@ export default function AdminLayout() {
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         <div className="space-y-6">
-          {/* Logo & Collapse Header */}
+          {/* Logo & Header */}
           <div className="flex items-center justify-between px-1">
             <Link to="/" className="flex items-center space-x-2">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-md">
@@ -84,7 +85,7 @@ export default function AdminLayout() {
 
             <button
               onClick={() => setCollapsed(!collapsed)}
-              className="hidden lg:flex p-1.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-500"
+              className="hidden lg:flex p-1.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-500 cursor-pointer"
               title="Toggle Sidebar"
             >
               {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -92,14 +93,14 @@ export default function AdminLayout() {
 
             <button
               onClick={() => setMobileOpen(false)}
-              className="lg:hidden p-1.5 text-slate-500"
+              className="lg:hidden p-1.5 text-slate-500 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="space-y-1.5 overflow-y-auto max-h-[calc(100vh-170px)]">
+          {/* Navigation Links List */}
+          <nav className="space-y-1.5 overflow-y-auto max-h-[calc(100vh-170px)] scrollbar-thin">
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -118,7 +119,7 @@ export default function AdminLayout() {
           </nav>
         </div>
 
-        {/* Footer Tenant Info & Return to Store */}
+        {/* Footer Return Link */}
         <div className="pt-3 border-t border-slate-100">
           <Link
             to="/"
@@ -132,11 +133,10 @@ export default function AdminLayout() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile Navbar */}
         <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between sticky top-0 z-30">
           <button
             onClick={() => setMobileOpen(true)}
-            className="p-2 text-slate-700 hover:bg-slate-100 rounded-xl"
+            className="p-2 text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer"
           >
             <Menu className="w-5 h-5" />
           </button>

@@ -2,71 +2,90 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 
 const CartContext = createContext();
 
-export function CartProvider({ children }) {
-  const tenantSlug = localStorage.getItem("current_tenant_slug") || "default";
-  const storageKey = `cart_items_${tenantSlug}`;
-
+export const CartProvider = ({ children }) => {
+  // 1. Cart Items with LocalStorage Persistence
   const [cart, setCart] = useState(() => {
     try {
-      const saved = localStorage.getItem(storageKey);
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
+      const savedCart = localStorage.getItem("store_cart");
+      return savedCart ? JSON.parse(savedCart) : [];
+    } catch {
       return [];
     }
   });
 
+  // 2. Direct Buy Now Item with LocalStorage Persistence
+  const [checkoutItem, setCheckoutItemState] = useState(() => {
+    try {
+      const savedCheckout = localStorage.getItem("direct_checkout_item");
+      return savedCheckout ? JSON.parse(savedCheckout) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Sync Cart to LocalStorage
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(cart));
-    } catch (e) {}
-  }, [cart, storageKey]);
+      localStorage.setItem("store_cart", JSON.stringify(cart));
+    } catch (e) {
+      console.error("Cart save error", e);
+    }
+  }, [cart]);
 
-  const addToCart = (product, quantity = 1) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => (item.id || item._id) === (product.id || product._id));
+  // Robust setCheckoutItem wrapper
+  const setCheckoutItem = (item) => {
+    setCheckoutItemState(item);
+    try {
+      if (item) {
+        localStorage.setItem("direct_checkout_item", JSON.stringify(item));
+      } else {
+        localStorage.removeItem("direct_checkout_item");
+      }
+    } catch (e) {
+      console.error("CheckoutItem save error", e);
+    }
+  };
+
+  // Add To Cart Function
+  const addToCart = (product) => {
+    setCart((prevCart) => {
+      const existing = prevCart.find(
+        (it) => (it._id || it.id) === (product._id || product.id)
+      );
       if (existing) {
-        return prev.map((item) =>
-          (item.id || item._id) === (product.id || product._id)
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
+        return prevCart.map((it) =>
+          (it._id || it.id) === (product._id || product.id)
+            ? { ...it, quantity: (it.quantity || 1) + (product.quantity || 1) }
+            : it
         );
       }
-      return [...prev, { ...product, quantity }];
+      return [...prevCart, { ...product, quantity: product.quantity || 1 }];
     });
   };
 
-  const removeFromCart = (id) => {
-    setCart((prev) => prev.filter((item) => (item.id || item._id) !== id));
+  // Clear Cart & Direct Buy
+  const clearCart = () => {
+    setCart([]);
+    setCheckoutItem(null);
+    try {
+      localStorage.removeItem("store_cart");
+      localStorage.removeItem("direct_checkout_item");
+    } catch (e) {}
   };
-
-  const updateQuantity = (id, delta) => {
-    setCart((prev) =>
-      prev
-        .map((item) => {
-          if ((item.id || item._id) === id) {
-            const newQty = item.quantity + delta;
-            return newQty > 0 ? { ...item, quantity: newQty } : null;
-          }
-          return item;
-        })
-        .filter(Boolean)
-    );
-  };
-
-  const clearCart = () => setCart([]);
-
-  const subtotal = cart.reduce(
-    (acc, it) => acc + (it.finalPrice || it.price) * (it.quantity || 1),
-    0
-  );
 
   return (
     <CartContext.Provider
-      value={{ cart, addToCart, removeFromCart, updateQuantity, clearCart, subtotal }}
+      value={{
+        cart,
+        addToCart,
+        checkoutItem,
+        setCheckoutItem,
+        clearCart
+      }}
     >
       {children}
     </CartContext.Provider>
   );
-}
+};
 
 export const useCart = () => useContext(CartContext);

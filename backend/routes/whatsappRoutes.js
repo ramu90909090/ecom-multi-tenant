@@ -4,7 +4,7 @@ const controller = require("../controllers/whatsappAdminController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const roleMiddleware = require("../middlewares/roleMiddleware");
 
-// Sirf store Admin hi WhatsApp Automation manage kar sakta hai[cite: 3]
+// Sirf store Admin hi WhatsApp Automation manage kar sakta hai
 router.use(authMiddleware, roleMiddleware("admin"));
 
 // WhatsApp Client Session Management

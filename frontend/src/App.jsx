@@ -22,7 +22,7 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import NotFound from "./pages/NotFound";
 
-// User CMS Pages
+// User Pages
 import AboutUs from "./pages/user/AboutUs";
 import ContactUs from "./pages/user/ContactUs";
 import UserDashboard from "./pages/user/UserDashboard";
@@ -36,7 +36,10 @@ import HeaderFooterCms from "./pages/admin/HeaderFooterCms";
 import AboutPageCms from "./pages/admin/AboutPageCms";
 import ContactPageCms from "./pages/admin/ContactPageCms";
 import ContactInquiries from "./pages/admin/ContactInquiries";
-import AdminWhatsappLogs from "./pages/admin/AdminWhatsappLogs";
+
+// WhatsApp Automation Pages
+import AdminWhatsAppQR from "./pages/admin/AdminWhatsAppQR"; // Live QR Scanner Page
+import AdminWhatsApp from "./pages/admin/AdminWhatsApp";     // Logs & Queue Page
 
 export default function App() {
   return (
@@ -73,7 +76,7 @@ export default function App() {
                       }
                     />
 
-                    {/* Admin Protected Routes */}
+                    {/* Admin Protected Routes with Left Sidebar Menu */}
                     <Route
                       path="/admin"
                       element={
@@ -87,11 +90,17 @@ export default function App() {
                       <Route path="products" element={<ManageProducts />} />
                       <Route path="orders" element={<AdminOrders />} />
                       <Route path="users" element={<AdminUsers />} />
+
+                      {/* 1. WhatsApp Live QR Scanner */}
+                      <Route path="whatsapp-qr" element={<AdminWhatsAppQR />} />
+
+                      {/* 2. WhatsApp Outgoing Notification Logs & Queue */}
+                      <Route path="whatsapp" element={<AdminWhatsApp />} />
+
+                      <Route path="contact-inquiries" element={<ContactInquiries />} />
                       <Route path="header-footer-cms" element={<HeaderFooterCms />} />
                       <Route path="about-cms" element={<AboutPageCms />} />
                       <Route path="contact-cms" element={<ContactPageCms />} />
-                      <Route path="contact-inquiries" element={<ContactInquiries />} />
-                      <Route path="whatsapp" element={<AdminWhatsappLogs />} />
                     </Route>
 
                     {/* 404 Route */}

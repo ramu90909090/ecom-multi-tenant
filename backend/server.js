@@ -27,9 +27,12 @@ const orderRoutes = require("./routes/orderRoutes");
 const userRoutes = require("./routes/userRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
-// WhatsApp Engine & Message Queue Services
+// WhatsApp Engine & Background Message Queue Services
 const whatsappService = require("./services/whatsappService");
 const { processQueue } = require("./services/queueService");
+
+// Asynchronous Email Queue Processor Service
+const { processEmailQueue } = require("./services/emailQueueService");
 
 // Database Initialization
 connectDB();
@@ -101,7 +104,11 @@ const generalLimiter = rateLimit({
     message: "Too many requests from this IP. Please try again after 15 minutes."
   },
   // Development testing me polling ya localhost ko block na hone de
-  skip: (req) => isDev && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1")
+  skip: (req) =>
+    isDev &&
+    (req.ip === "127.0.0.1" ||
+      req.ip === "::1" ||
+      req.ip === "::ffff:127.0.0.1")
 });
 
 app.use("/api", generalLimiter);
@@ -194,14 +201,27 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || "development";
 
-// 14. Server Startup & Safe WhatsApp Service Hook
+// 14. Server Startup & Background Queues Hook
 app.listen(PORT, () => {
   console.log(`🚀 Server running in ${NODE_ENV} mode on port ${PORT}`);
   console.log(`📁 Static files serving at: http://localhost:${PORT}/uploads`);
   console.log(`🔗 Multi-Tenant Support: Enabled for all subdomains & origins`);
 
+  // A. Resume / Process Pending Email Queue on Server Startup
   try {
-    if (whatsappService && typeof whatsappService.initializeWhatsApp === "function") {
+    if (typeof processEmailQueue === "function") {
+      processEmailQueue();
+    }
+  } catch (err) {
+    console.warn("⚠️ Email Queue Startup Warning:", err.message);
+  }
+
+  // B. Initialize WhatsApp Service & Resume WhatsApp Message Queue
+  try {
+    if (
+      whatsappService &&
+      typeof whatsappService.initializeWhatsApp === "function"
+    ) {
       whatsappService.initializeWhatsApp(() => {
         if (typeof processQueue === "function") {
           processQueue();

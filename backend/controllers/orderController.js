@@ -4,13 +4,18 @@ const User = require("../models/User");
 const SiteSettings = require("../models/SiteSettings");
 const jwt = require("jsonwebtoken");
 const { queueMessage } = require("../services/queueService");
+const { queueEmail } = require("../services/emailQueueService");
 const whatsappService = require("../services/whatsappService");
 const getAdminWhatsappPhone = require("../utils/getAdminWhatsappPhone");
 
+// Currency Formatter Helper
 const formatCurrency = (amt) => `₹${Number(amt || 0).toLocaleString("en-IN")}`;
 
+// =========================================================================
+// WHATSAPP TEMPLATES
+// =========================================================================
 const getOrderPlacedMessage = ({ storeName, order, recipientName, isForAdmin = false }) => {
-  const itemList = order.items
+  const itemList = (order.items || [])
     .map((it) => `• ${it.name} (Qty: ${it.quantity}) - ${formatCurrency(it.total)}`)
     .join("\n");
 
@@ -18,54 +23,112 @@ const getOrderPlacedMessage = ({ storeName, order, recipientName, isForAdmin = f
     return (
       `🔔 *NEW ORDER RECEIVED - ${storeName.toUpperCase()}*\n\n` +
       `📦 *Order ID:* ${order.orderId}\n` +
-      `👤 *Customer:* ${order.shippingDetails.name}\n` +
-      `📞 *Phone:* ${order.shippingDetails.phone}\n` +
-      `📍 *City:* ${order.shippingDetails.city} - ${order.shippingDetails.pincode}\n` +
-      `💳 *Payment Mode:* ${order.paymentInfo.mode.toUpperCase()} (UTR: ${order.paymentInfo.utrNumber})\n\n` +
+      `👤 *Customer:* ${order.shippingDetails?.name}\n` +
+      `📞 *Phone:* ${order.shippingDetails?.phone}\n` +
+      `📍 *City:* ${order.shippingDetails?.city} (${order.shippingDetails?.pincode})\n` +
+      `💳 *Payment Mode:* ${order.paymentInfo?.mode?.toUpperCase()} (UTR: ${order.paymentInfo?.utrNumber})\n\n` +
       `*Order Items:*\n${itemList}\n\n` +
-      `💰 *Total Amount:* ${formatCurrency(order.pricing.totalPayable)}\n\n` +
+      `💰 *Total Amount:* ${formatCurrency(order.pricing?.totalPayable)}\n\n` +
       `Admin panel se order review karein.`
     );
   }
 
   return (
     `🎉 *ORDER CONFIRMED - ${storeName.toUpperCase()}*\n\n` +
-    `Namaste *${recipientName}* ji,\n` +
+    `Namaste *${recipientName}*ji,\n\n` +
     `Aapka order receive ho gaya hai.\n\n` +
     `📦 *Order ID:* ${order.orderId}\n\n` +
     `*Items:*\n${itemList}\n\n` +
-    `💰 *Grand Total:* ${formatCurrency(order.pricing.totalPayable)}\n` +
-    `🚚 *Address:* ${order.shippingDetails.address}, ${order.shippingDetails.city} (${order.shippingDetails.pincode})\n\n` +
+    `💰 *Grand Total:* ${formatCurrency(order.pricing?.totalPayable)}\n` +
+    `🚚 *Address:* ${order.shippingDetails?.address}, ${order.shippingDetails?.city} (${order.shippingDetails?.pincode})\n\n` +
     `Thank you for shopping with *${storeName}*!`
   );
 };
 
 const getStatusUpdateMessage = ({ storeName, order, newStatus }) => {
+  let emoji = "🚚";
+  let note = "Aapka order process ho raha hai.";
+  if (newStatus === "Processing") {
+    emoji = "⚙️";
+    note = "Aapka parcel packaging me hai.";
+  } else if (newStatus === "Shipped") {
+    emoji = "📦";
+    note = "Aapka order dispatch ho chuka hai aur delivery partner ko hand over kar diya gaya hai.";
+  } else if (newStatus === "Delivered") {
+    emoji = "✅";
+    note = "Aapka parcel safaltapoorvak deliver ho gaya hai. Hum aasha karte hain aapko product pasand aaya hoga!";
+  } else if (newStatus === "Cancelled") {
+    emoji = "❌";
+    note = "Aapka order cancel kar diya gaya hai.";
+  }
+
   return (
-    `🚚 *ORDER STATUS UPDATE - ${storeName.toUpperCase()}*\n\n` +
-    `Namaste *${order.shippingDetails.name}* ji,\n\n` +
-    `Order *${order.orderId}* ka status update hua hai:\n` +
-    `📍 *Status:* *${newStatus.toUpperCase()}*\n` +
+    `${emoji} *ORDER STATUS UPDATE - ${storeName.toUpperCase()}*\n\n` +
+    `Namaste *${order.shippingDetails?.name}*ji,\n\n` +
+    `Aapke Order *#${order.orderId}* ka status update ho gaya hai:\n` +
+    `📍 *Current Status:* *${newStatus.toUpperCase()}*\n` +
+    `📝 *Details:* ${note}\n` +
     (order.notes ? `💬 *Note:* ${order.notes}\n` : "") +
     `\nTeam *${storeName}*`
   );
 };
 
 const getPaymentStatusUpdateMessage = ({ storeName, order, newPaymentStatus }) => {
+  const isVerified = newPaymentStatus === "Verified";
+  const emoji = isVerified ? "💳" : "⚠️";
+
   return (
-    `💳 *PAYMENT STATUS UPDATE - ${storeName.toUpperCase()}*\n\n` +
-    `Namaste *${order.shippingDetails.name}* ji,\n\n` +
-    `Order *${order.orderId}* ka payment status update hua hai:\n` +
+    `${emoji} *PAYMENT STATUS UPDATE - ${storeName.toUpperCase()}*\n\n` +
+    `Namaste *${order.shippingDetails?.name}*ji,\n\n` +
+    `Aapke Order *#${order.orderId}* ka payment status update ho gaya hai:\n` +
     `💳 *Status:* *${newPaymentStatus.toUpperCase()}*\n` +
-    `🔢 *UTR:* ${order.paymentInfo.utrNumber || "N/A"}\n` +
+    `🔢 *UTR:* ${order.paymentInfo?.utrNumber || "N/A"}\n` +
+    `💰 *Amount:* ${formatCurrency(order.pricing?.totalPayable)}\n` +
     (order.notes ? `💬 *Note:* ${order.notes}\n` : "") +
-    `\nTeam *${storeName}*`
+    (isVerified
+      ? `\nAapki payment verify ho chuki hai. Order process kiya ja raha hai!`
+      : `\nPayment reference verify nahi ho saki. Kripya support desk par sahi UTR provide karein.`) +
+    `\n\nTeam *${storeName}*`
   );
 };
 
+// =========================================================================
+// HTML EMAIL TEMPLATE GENERATOR
+// =========================================================================
+const getOrderStatusHtml = ({ storeName, order, title, status, isGreen }) => `
+  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 20px; background-color: #ffffff;">
+    <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f1f5f9;">
+      <h2 style="color: #4f46e5; margin: 0; font-size: 24px;">${storeName}</h2>
+      <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">Official Order Notification</p>
+    </div>
+    <div style="padding: 24px 0;">
+      <p style="font-size: 15px; color: #1e293b;">Namaste <b>${order.shippingDetails?.name || "Customer"}</b>,</p>
+      <p style="font-size: 14px; color: #475569; line-height: 1.6;">
+        Aapke Order <b>#${order.orderId}</b> ke regarding naya status update hua hai:
+      </p>
+      <div style="background-color: #f8fafc; border-radius: 14px; padding: 18px; margin: 20px 0; border: 1px solid #e2e8f0; text-align: center;">
+        <p style="margin: 0 0 6px; font-size: 12px; color: #64748b; font-weight: bold; text-transform: uppercase;">${title}</p>
+        <p style="margin: 0; font-size: 22px; font-weight: 900; color: ${isGreen ? "#16a34a" : "#4f46e5"};">${status}</p>
+      </div>
+      <p style="font-size: 13px; color: #64748b;">
+        Delivery Address: <b>${order.shippingDetails?.address}, ${order.shippingDetails?.city} (${order.shippingDetails?.pincode})</b>
+      </p>
+      <p style="font-size: 13px; color: #64748b;">
+        Total Amount: <b>${formatCurrency(order.pricing?.totalPayable)}</b>
+      </p>
+    </div>
+    <div style="text-align: center; padding-top: 16px; border-top: 1px solid #f1f5f9; color: #94a3b8; font-size: 12px;">
+      <p style="margin: 0;">Thank you for shopping with <b>${storeName}</b>!</p>
+    </div>
+  </div>
+`;
+
+// =========================================================================
+// 1. CREATE NEW ORDER (Public Checkout with Notifications)
+// =========================================================================
 exports.createOrder = async (req, res) => {
   try {
-    const tenantId = req.tenant._id;
+    const tenantId = req.tenant?._id;
     const { orderId, items, shippingDetails, paymentInfo, pricing, userId } = req.body;
 
     if (!items || !items.length) {
@@ -77,16 +140,21 @@ exports.createOrder = async (req, res) => {
       const token = req.cookies?.token || req.headers.authorization?.split(" ")[1];
       if (token) {
         try {
-          const decoded = jwt.verify(token, process.env.JWT_SECRET || "production_secure_multitenant_jwt_secret_key_2026");
+          const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET || "production_secure_multitenant_jwt_secret_key_2026"
+          );
           finalUserId = decoded.id;
-        } catch (e) {}
+        } catch (e) {
+          // Proceed as guest if token invalid
+        }
       }
     }
 
     const formattedItems = items.map((it) => ({
       product: it.product || it.id || it._id,
       name: it.name,
-      image: Array.isArray(it.images) && it.images.length > 0 ? it.images[0] : it.image,
+      image: Array.isArray(it.images) && it.images.length > 0 ? it.images[0] : (it.image || ""),
       price: it.finalPrice || it.price,
       quantity: it.quantity || 1,
       total: (it.finalPrice || it.price) * (it.quantity || 1)
@@ -109,27 +177,52 @@ exports.createOrder = async (req, res) => {
     });
 
     const settings = await SiteSettings.findOne({ tenant: tenantId });
-    const storeName = settings?.navbar?.brandName || req.tenant.storeName || "KHASTORE";
+    const storeName = settings?.navbar?.brandName || req.tenant?.storeName || "KHASTORE";
 
-    const dynamicAdminPhone = (await getAdminWhatsappPhone(tenantId)) || whatsappService.getConnectedAdminNumber();
-    const customerPhone = newOrder.shippingDetails.phone;
+    const dynamicAdminPhone =
+      (await getAdminWhatsappPhone(tenantId)) ||
+      (whatsappService?.getConnectedAdminNumber ? whatsappService.getConnectedAdminNumber() : null);
+    const customerPhone = newOrder.shippingDetails?.phone;
+    const customerEmail = newOrder.shippingDetails?.email;
 
-    const customerMsg = getOrderPlacedMessage({
-      storeName,
-      order: newOrder,
-      recipientName: newOrder.shippingDetails.name,
-      isForAdmin: false
-    });
+    // Customer WhatsApp Alert
+    if (customerPhone) {
+      const customerMsg = getOrderPlacedMessage({
+        storeName,
+        order: newOrder,
+        recipientName: newOrder.shippingDetails.name,
+        isForAdmin: false
+      });
+      await queueMessage({
+        tenantId,
+        orderId: newOrder.orderId,
+        recipientNumber: customerPhone,
+        recipientType: "customer",
+        triggerType: "order_placed",
+        messageBody: customerMsg
+      });
+    }
 
-    await queueMessage({
-      tenantId,
-      orderId: newOrder.orderId,
-      recipientNumber: customerPhone,
-      recipientType: "customer",
-      triggerType: "order_placed",
-      messageBody: customerMsg
-    });
+    // Customer Email Alert
+    if (customerEmail) {
+      const emailHtml = getOrderStatusHtml({
+        storeName,
+        order: newOrder,
+        title: "Order Placed Successfully",
+        status: "Pending Verification",
+        isGreen: true
+      });
+      await queueEmail({
+        tenantId,
+        to: customerEmail,
+        subject: `🎉 Order Confirmation #${newOrder.orderId} - ${storeName}`,
+        htmlBody: emailHtml,
+        triggerType: "order_status",
+        referenceId: newOrder.orderId
+      });
+    }
 
+    // Admin WhatsApp Alert
     if (dynamicAdminPhone) {
       const adminMsg = getOrderPlacedMessage({
         storeName,
@@ -149,17 +242,21 @@ exports.createOrder = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Order placed successfully.",
+      message: "Order placed successfully. Payment verification & notifications pending.",
       data: newOrder
     });
   } catch (error) {
+    console.error("createOrder Error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// =========================================================================
+// 2. GET MY ORDERS (Logged-in Customer)
+// =========================================================================
 exports.getMyOrders = async (req, res) => {
   try {
-    const tenantId = req.tenant._id;
+    const tenantId = req.tenant?._id;
     const userId = req.user?._id || req.user?.id;
     const userEmail = req.user?.email;
     const userPhone = req.user?.mobile || req.user?.phone;
@@ -178,17 +275,19 @@ exports.getMyOrders = async (req, res) => {
 
     if (search && search.trim()) {
       const regex = { $regex: search.trim(), $options: "i" };
-      query.$and = [{
-        $or: [
-          { orderId: regex },
-          { "items.name": regex },
-          { "paymentInfo.utrNumber": regex }
-        ]
-      }];
+      query.$and = [
+        {
+          $or: [
+            { orderId: regex },
+            { "items.name": regex },
+            { "paymentInfo.utrNumber": regex }
+          ]
+        }
+      ];
     }
 
-    const currentPage = Number(page);
-    const perPage = Number(limit);
+    const currentPage = Math.max(1, Number(page) || 1);
+    const perPage = Math.max(1, Number(limit) || 5);
     const skip = (currentPage - 1) * perPage;
 
     const [orders, totalOrders] = await Promise.all([
@@ -217,13 +316,17 @@ exports.getMyOrders = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error("getMyOrders Error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// =========================================================================
+// 3. UPDATE ORDER STATUS (Admin CRM with Dual WhatsApp & Email Queue)
+// =========================================================================
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const tenantId = req.tenant._id;
+    const tenantId = req.tenant?._id;
     const { orderStatus, paymentStatus, notes } = req.body;
     const order = await Order.findOne({ _id: req.params.id, tenant: tenantId });
 
@@ -256,6 +359,7 @@ exports.updateOrderStatus = async (req, res) => {
       order.stockDeducted = true;
     }
 
+    // Stock restore on Cancelled/Rejected
     const isCancelledOrRejected =
       orderStatus === "Cancelled" || paymentStatus === "Rejected" || paymentStatus === "Cancelled";
 
@@ -270,47 +374,100 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     if (orderStatus) order.orderStatus = orderStatus;
-    if (paymentStatus) order.paymentInfo.status = paymentStatus;
+    if (paymentStatus && order.paymentInfo) order.paymentInfo.status = paymentStatus;
     if (notes !== undefined) order.notes = notes;
 
     await order.save();
 
     const settings = await SiteSettings.findOne({ tenant: tenantId });
-    const storeName = settings?.navbar?.brandName || req.tenant.storeName || "KHASTORE";
+    const storeName = settings?.navbar?.brandName || req.tenant?.storeName || "KHASTORE";
+    const recipientPhone = order.shippingDetails?.phone;
+    const recipientEmail = order.shippingDetails?.email;
 
+    // A. Trigger Delivery Status Update Notifications
     if (orderStatus && orderStatus !== previousOrderStatus) {
-      const statusMsg = getStatusUpdateMessage({ storeName, order, newStatus: orderStatus });
-      await queueMessage({
-        tenantId,
-        orderId: order.orderId,
-        recipientNumber: order.shippingDetails.phone,
-        recipientType: "customer",
-        triggerType: "status_updated",
-        messageBody: statusMsg
-      });
+      if (recipientPhone) {
+        const statusMsg = getStatusUpdateMessage({ storeName, order, newStatus: orderStatus });
+        await queueMessage({
+          tenantId,
+          orderId: order.orderId,
+          recipientNumber: recipientPhone,
+          recipientType: "customer",
+          triggerType: "status_updated",
+          messageBody: statusMsg
+        });
+      }
+
+      if (recipientEmail) {
+        const emailHtml = getOrderStatusHtml({
+          storeName,
+          order,
+          title: "Shipment Delivery Status",
+          status: orderStatus,
+          isGreen: orderStatus === "Delivered"
+        });
+        await queueEmail({
+          tenantId,
+          to: recipientEmail,
+          subject: `📦 Order #${order.orderId} Delivery Update: ${orderStatus}`,
+          htmlBody: emailHtml,
+          triggerType: "order_status",
+          referenceId: order.orderId
+        });
+      }
     }
 
+    // B. Trigger Payment Status Update Notifications
     if (paymentStatus && paymentStatus !== previousPaymentStatus) {
-      const paymentMsg = getPaymentStatusUpdateMessage({ storeName, order, newPaymentStatus: paymentStatus });
-      await queueMessage({
-        tenantId,
-        orderId: order.orderId,
-        recipientNumber: order.shippingDetails.phone,
-        recipientType: "customer",
-        triggerType: "payment_verified",
-        messageBody: paymentMsg
-      });
+      if (recipientPhone) {
+        const paymentMsg = getPaymentStatusUpdateMessage({
+          storeName,
+          order,
+          newPaymentStatus: paymentStatus
+        });
+        await queueMessage({
+          tenantId,
+          orderId: order.orderId,
+          recipientNumber: recipientPhone,
+          recipientType: "customer",
+          triggerType: "payment_verified",
+          messageBody: paymentMsg
+        });
+      }
+
+      if (recipientEmail) {
+        const emailHtml = getOrderStatusHtml({
+          storeName,
+          order,
+          title: "Payment Verification Status",
+          status: paymentStatus,
+          isGreen: paymentStatus === "Verified"
+        });
+        await queueEmail({
+          tenantId,
+          to: recipientEmail,
+          subject: `💳 Payment Status #${order.orderId}: ${paymentStatus}`,
+          htmlBody: emailHtml,
+          triggerType: "payment_status",
+          referenceId: order.orderId
+        });
+      }
     }
 
-    res.status(200).json({ success: true, message: "Order updated successfully.", data: order });
+    res.status(200).json({
+      success: true,
+      message: "Order updated successfully. WhatsApp & Email alerts queued.",
+      data: order
+    });
   } catch (error) {
+    console.error("updateOrderStatus Error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==========================================
-// GET ALL ORDERS (Admin CRM with Search, Filter & Pagination)
-// ==========================================
+// =========================================================================
+// 4. GET ALL ORDERS (Admin CRM with Search, Filter & Pagination)
+// =========================================================================
 exports.getAllOrders = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
@@ -326,7 +483,7 @@ exports.getAllOrders = async (req, res) => {
       limit = 10
     } = req.query;
 
-    // 1. Search across Order ID, UTR Number, Customer Name, Phone, and Email
+    // Search across Order ID, UTR Number, Customer Name, Phone, and Email
     if (search && search.trim()) {
       const regex = { $regex: search.trim(), $options: "i" };
       query.$or = [
@@ -338,7 +495,7 @@ exports.getAllOrders = async (req, res) => {
       ];
     }
 
-    // 2. Status Filters
+    // Status Filters
     if (orderStatus && orderStatus !== "All") {
       query.orderStatus = orderStatus;
     }
@@ -349,18 +506,17 @@ exports.getAllOrders = async (req, res) => {
       query["paymentInfo.mode"] = paymentMode;
     }
 
-    // 3. Sorting
+    // Sorting
     let sortOptions = { createdAt: -1 };
     if (sortBy === "oldest") sortOptions = { createdAt: 1 };
     else if (sortBy === "amount-high") sortOptions = { "pricing.totalPayable": -1 };
     else if (sortBy === "amount-low") sortOptions = { "pricing.totalPayable": 1 };
 
-    // 4. Pagination (10, 25, 50, 100)
+    // Pagination (10, 25, 50, 100)
     const currentPage = Math.max(1, parseInt(page, 10) || 1);
     const perPage = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (currentPage - 1) * perPage;
 
-    // 5. Query execution and Metrics Stats
     const [orders, totalOrders, pendingCount, deliveredCount, revenueStats] =
       await Promise.all([
         Order.find(query)
@@ -368,7 +524,10 @@ exports.getAllOrders = async (req, res) => {
           .skip(skip)
           .limit(perPage),
         Order.countDocuments(query),
-        Order.countDocuments({ ...query, orderStatus: { $in: ["Pending", "Processing", "Shipped"] } }),
+        Order.countDocuments({
+          ...query,
+          orderStatus: { $in: ["Pending", "Processing", "Shipped"] }
+        }),
         Order.countDocuments({ ...query, orderStatus: "Delivered" }),
         Order.aggregate([
           { $match: { ...query, "paymentInfo.status": "Verified" } },
@@ -401,6 +560,10 @@ exports.getAllOrders = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// =========================================================================
+// 5. DELETE SINGLE ORDER (With Inventory Stock Safety)
+// =========================================================================
 exports.deleteOrder = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
@@ -416,9 +579,10 @@ exports.deleteOrder = async (req, res) => {
     if (order.stockDeducted && order.items && order.items.length > 0) {
       for (const item of order.items) {
         if (item.product) {
-          await Product.findByIdAndUpdate(item.product, {
-            $inc: { stock: item.quantity }
-          });
+          await Product.findOneAndUpdate(
+            { _id: item.product, tenant: tenantId },
+            { $inc: { stock: item.quantity } }
+          );
         }
       }
     }
@@ -435,7 +599,7 @@ exports.deleteOrder = async (req, res) => {
 };
 
 // =========================================================================
-// 2. BULK DELETE ORDERS (Multiple IDs ya All Rejected/Cancelled Orders)
+// 6. BULK DELETE ORDERS (Multiple IDs ya All Rejected Orders)
 // =========================================================================
 exports.bulkDeleteOrders = async (req, res) => {
   try {
@@ -446,7 +610,6 @@ exports.bulkDeleteOrders = async (req, res) => {
     if (tenantId) deleteFilter.tenant = tenantId;
 
     if (deleteAllRejected) {
-      // Saare rejected payment wale orders ko target karein
       deleteFilter["paymentInfo.status"] = "Rejected";
     } else if (Array.isArray(orderIds) && orderIds.length > 0) {
       deleteFilter._id = { $in: orderIds };
@@ -464,9 +627,10 @@ exports.bulkDeleteOrders = async (req, res) => {
       if (order.stockDeducted && order.items) {
         for (const item of order.items) {
           if (item.product) {
-            await Product.findByIdAndUpdate(item.product, {
-              $inc: { stock: item.quantity }
-            });
+            await Product.findOneAndUpdate(
+              { _id: item.product, tenant: tenantId },
+              { $inc: { stock: item.quantity } }
+            );
           }
         }
       }

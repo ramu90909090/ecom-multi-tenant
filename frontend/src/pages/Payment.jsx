@@ -28,13 +28,29 @@ import PaymentInvoice from "../components/payment/PaymentInvoice";
 import { getImageUrl } from "../utils/productUtils";
 
 export default function Payment() {
-  const { cart, checkoutItem, clearCart } = useCart();
+  const { cart, checkoutItem, clearCart, setCheckoutItem } = useCart();
   const { user } = useAuth();
   const { settings, tenant } = useSettings();
   const navigate = useNavigate();
 
-  // Buy Now single product ya entire cart list
-  const items = checkoutItem ? [checkoutItem] : cart;
+  // 1. Direct Checkout Item Check with LocalStorage Fallback (Prevents 'Checkout Khali Hai' error)
+  const effectiveCheckoutItem =
+    checkoutItem ||
+    (() => {
+      try {
+        const saved = localStorage.getItem("direct_checkout_item");
+        return saved ? JSON.parse(saved) : null;
+      } catch {
+        return null;
+      }
+    })();
+
+  // Direct Buy Item has priority over entire Cart
+  const items = effectiveCheckoutItem
+    ? [effectiveCheckoutItem]
+    : cart && cart.length > 0
+    ? cart
+    : [];
 
   // Checkout Stages: "checkout" | "success"
   const [stage, setStage] = useState("checkout");
@@ -50,34 +66,40 @@ export default function Payment() {
   const [couponDiscount, setCouponDiscount] = useState(0);
   const [couponMsg, setCouponMsg] = useState({ type: "", text: "" });
 
-  // Store Brand Configs
+  // Store Brand & Payment Configuration (Supports both settings structures)
   const storeName = settings?.navbar?.brandName || tenant?.storeName || "KHASTORE";
-  const merchantUpi = settings?.payment?.upiId || "juhip2019@okaxis";
-  const merchantName = settings?.payment?.merchantName || storeName;
-  const qrImage = settings?.payment?.qrCodeImage || "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=" + merchantUpi;
+  const merchantUpi =
+    settings?.paymentGateway?.upiId ||
+    settings?.payment?.upiId ||
+    "juhip2019@okaxis";
+  const merchantName =
+    settings?.paymentGateway?.merchantName ||
+    settings?.payment?.merchantName ||
+    storeName;
 
   // Shipping Form State (Auto-filled if user is logged in)
   const [shipping, setShipping] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    address: "",
-    city: "",
-    pincode: "",
-    state: "Uttar Pradesh"
+    name: user?.name || "",
+    phone: user?.mobile || "",
+    email: user?.email || "",
+    address: user?.address || "",
+    city: user?.district || user?.city || "",
+    pincode: user?.pincode || "",
+    state: user?.state || "Uttar Pradesh"
   });
 
   useEffect(() => {
     if (user) {
-      setShipping({
-        name: user.name || "",
-        phone: user.mobile || "",
-        email: user.email || "",
-        address: user.address || "",
-        city: user.district || user.city || "",
-        pincode: user.pincode || "",
-        state: user.state || "Uttar Pradesh"
-      });
+      setShipping((prev) => ({
+        ...prev,
+        name: prev.name || user.name || "",
+        phone: prev.phone || user.mobile || "",
+        email: prev.email || user.email || "",
+        address: prev.address || user.address || "",
+        city: prev.city || user.district || user.city || "",
+        pincode: prev.pincode || user.pincode || "",
+        state: prev.state || user.state || "Uttar Pradesh"
+      }));
     }
   }, [user]);
 
@@ -87,16 +109,27 @@ export default function Payment() {
     return acc + unitPrice * (it.quantity || 1);
   }, 0);
 
-  // Business Rules: Free Delivery above ₹1000, else ₹50. GST 18% inclusive/calculated.
+  // Business Rules: Free Delivery above ₹1000, else ₹50. GST 18% calculated.
   const deliveryFee = itemsSubtotal >= 1000 || itemsSubtotal === 0 ? 0 : 50;
   const gstAmount = Math.round(itemsSubtotal * 0.18);
   const netPayable = Math.max(0, itemsSubtotal + deliveryFee - couponDiscount);
   const isCodEligible = itemsSubtotal >= 5000;
 
-  // Dynamic UPI Deep-link for Mobile Instant Pay
+  // Dynamic UPI Deep-link & Dynamic QR Code
   const upiDeepLink = `upi://pay?pa=${encodeURIComponent(merchantUpi)}&pn=${encodeURIComponent(
     merchantName
   )}&am=${netPayable}&cu=INR&tn=${encodeURIComponent(`Order from ${storeName}`)}`;
+
+  const configuredQr =
+    settings?.paymentGateway?.paymentQrImage ||
+    settings?.payment?.qrCodeImage ||
+    settings?.payment?.qrImage;
+
+  const qrImage = configuredQr
+    ? getImageUrl(configuredQr)
+    : `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+        upiDeepLink
+      )}`;
 
   const handleCopyUpi = () => {
     navigator.clipboard.writeText(merchantUpi);
@@ -126,7 +159,12 @@ export default function Payment() {
     setUtrError("");
 
     // Validate Shipping Form
-    if (!shipping.name || !shipping.phone || !shipping.address || !shipping.pincode) {
+    if (
+      !shipping.name.trim() ||
+      !shipping.phone.trim() ||
+      !shipping.address.trim() ||
+      !shipping.pincode.trim()
+    ) {
       alert("Kripya saari required delivery details bharein.");
       return;
     }
@@ -135,7 +173,9 @@ export default function Payment() {
     if (paymentMode === "upi") {
       const cleanUtr = utrNumber.trim();
       if (!cleanUtr) {
-        setUtrError("Payment complete karne ke liye 12-digit UTR/UPI Reference Number daalna zaroori hai.");
+        setUtrError(
+          "Payment complete karne ke liye 12-digit UTR/UPI Reference Number daalna zaroori hai."
+        );
         return;
       }
       if (cleanUtr.length < 8) {
@@ -159,11 +199,19 @@ export default function Payment() {
           product: it._id || it.id,
           name: it.name,
           image: it.image || (Array.isArray(it.images) ? it.images[0] : ""),
-          price: it.finalPrice || it.price,
-          quantity: it.quantity || 1,
-          total: (it.finalPrice || it.price) * (it.quantity || 1)
+          price: Number(it.finalPrice || it.price),
+          quantity: Number(it.quantity || 1),
+          total: Number(it.finalPrice || it.price) * Number(it.quantity || 1)
         })),
-        shippingDetails: shipping,
+        shippingDetails: {
+          name: shipping.name.trim(),
+          phone: shipping.phone.trim(),
+          email: shipping.email ? shipping.email.trim() : "",
+          address: shipping.address.trim(),
+          city: shipping.city.trim() || "Local City",
+          state: shipping.state.trim() || "Uttar Pradesh",
+          pincode: shipping.pincode.trim()
+        },
         paymentInfo: {
           mode: paymentMode,
           utrNumber: paymentMode === "upi" ? utrNumber.trim() : "COD-PENDING",
@@ -176,27 +224,45 @@ export default function Payment() {
           couponDiscount,
           totalPayable: netPayable
         },
-        userId: user?._id || null
+        userId: user?._id || user?.id || null
       };
 
-      await API.post("/orders", orderPayload);
+      const res = await API.post("/orders", orderPayload);
 
-      setFinalOrderData({
-        ...orderPayload,
-        date: new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
-      });
+      if (res.data?.success) {
+        const confirmedOrder = res.data.data || orderPayload;
+        setFinalOrderData({
+          ...confirmedOrder,
+          date: new Date().toLocaleString("en-IN", {
+            dateStyle: "medium",
+            timeStyle: "short"
+          })
+        });
 
-      setStage("success");
-      if (!checkoutItem) clearCart();
+        setStage("success");
+
+        // Clear direct item & cart state
+        if (typeof setCheckoutItem === "function") setCheckoutItem(null);
+        localStorage.removeItem("direct_checkout_item");
+        if (!effectiveCheckoutItem) {
+          clearCart();
+        }
+      } else {
+        alert(res.data?.message || "Order place karne me dikkat aayi.");
+      }
     } catch (err) {
       console.error("Order submission error:", err);
-      alert(err.response?.data?.message || err.message || "Order create karne me problem aayi. Stock verify karein.");
+      alert(
+        err.response?.data?.message ||
+          err.message ||
+          "Order create karne me problem aayi. Stock verify karein."
+      );
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Empty checkout guard
+  // 2. Empty Checkout Guard (Only shows when both cart & direct item are absent)
   if (items.length === 0 && stage !== "success") {
     return (
       <div className="min-h-[75vh] flex items-center justify-center px-4">
@@ -219,7 +285,7 @@ export default function Payment() {
     );
   }
 
-  // Stage: Order Success / Invoice
+  // 3. Stage: Order Success / Invoice View
   if (stage === "success" && finalOrderData) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8">
@@ -249,7 +315,7 @@ export default function Payment() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       
-      {/* 1. Interactive Step Progress Wizard */}
+      {/* Interactive Step Progress Wizard */}
       <div className="bg-white/80 backdrop-blur-md p-4 sm:p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between max-w-2xl mx-auto">
         <div className="flex items-center space-x-2 text-indigo-600 font-black text-xs">
           <span className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]">1</span>
@@ -569,7 +635,9 @@ export default function Payment() {
                       />
                       <div className="max-w-[150px] sm:max-w-[180px]">
                         <p className="font-extrabold text-slate-900 truncate">{item.name}</p>
-                        <p className="text-[11px] text-slate-400 font-semibold">Qty: {item.quantity || 1} • ₹{itemPrice.toLocaleString()}</p>
+                        <p className="text-[11px] text-slate-400 font-semibold">
+                          Qty: {item.quantity || 1} × ₹{itemPrice.toLocaleString()}
+                        </p>
                       </div>
                     </div>
                     <span className="font-black text-slate-900 text-sm">
