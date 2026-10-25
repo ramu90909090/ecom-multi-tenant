@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const contactCardSchema = new mongoose.Schema({
-  icon: { type: String, default: "Phone" },
+  icon: { type: String, default: "Phone" }, // Phone, MessageCircle, Mail, MapPin, Building2, Headphones
   title: { type: String, required: true, trim: true },
   desc: { type: String, required: true, trim: true },
   contact: { type: String, required: true, trim: true },
@@ -19,7 +19,12 @@ const faqSchema = new mongoose.Schema({
 
 const contactConfigSchema = new mongoose.Schema(
   {
-    tenant: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, unique: true, index: true },
+    tenant: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tenant",
+      required: true,
+      index: true
+    },
     banner: {
       tagline: { type: String, default: "24/7 Dedicated Support Channels" },
       heading: { type: String, default: "Humse Baat Karein, Hum Hamesha Aapke Sath Hain." },
@@ -34,7 +39,7 @@ const contactConfigSchema = new mongoose.Schema(
       locationTitle: { type: String, default: "Experience Center Location" },
       embedUrl: {
         type: String,
-        default: "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d113911.23388796856!2d80.85966601662998!3d26.848622994073356!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x399bfd991f32b16b%3A0x93ccba8909978be7!2sLucknow%2C%20Uttar%20Pradesh!5e0!3m2!1sen!2sin!4v1700000000000!5m2!1sen!2sin"
+        default: "https://maps.google.com/maps?q=Lucknow&t=&z=13&ie=UTF8&iwloc=&output=embed"
       },
       visitingHours: { type: String, default: "Visiting Hours: 10:00 AM - 7:00 PM (Monday to Saturday)" },
       isEnabled: { type: Boolean, default: true }

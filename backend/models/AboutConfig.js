@@ -38,30 +38,40 @@ const milestoneSchema = new mongoose.Schema({
 
 const aboutConfigSchema = new mongoose.Schema(
   {
-    tenant: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, unique: true, index: true },
+    tenant: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tenant",
+      required: true,
+      index: true
+    },
     hero: {
       badge: { type: String, default: "Redefining Online Shopping Experience" },
       headingPrefix: { type: String, default: "Humara Maqsad:" },
       headingHighlight: { type: String, default: "Quality & Bharosa Har Order Par" },
       description: {
         type: String,
-        default: "Yahan par hum tech gadgets, authentic lifestyle wear aur home upgrades ko affordably deliver karte hain."
+        default:
+          "Hum provide karte hain verified, authentic lifestyle aur electronics products direct factory pricing par, bina kisi third-party middleman commission ke."
       },
       isEnabled: { type: Boolean, default: true }
     },
     stats: [statItemSchema],
     infrastructure: [infraItemSchema],
     founder: {
-      name: { type: String, default: "Rahul Sharma" },
+      name: { type: String, default: "Store Founder" },
       designation: { type: String, default: "Founder & CEO" },
-      quote: { type: String, default: "Customer ka bharosa kisi bhi marketing campaign se badhkar hai." },
+      quote: {
+        type: String,
+        default: "Customer ka bharosa kisi bhi marketing campaign se badhkar hai."
+      },
       visionStory: {
         type: String,
-        default: "Jab humne yeh platform shuru kiya tha, humara ek hi principle tha: 100% genuine products at direct fair prices."
+        default:
+          "Humara ek hi principle hai: jo item customer ko mile, wo 100% genuine ho aur reasonable price me mile."
       },
       images: [
         {
-          url: { type: String, required: true },
+          url: { type: String, default: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80" },
           isActive: { type: Boolean, default: true }
         }
       ],
@@ -76,7 +86,10 @@ const aboutConfigSchema = new mongoose.Schema(
     milestones: [milestoneSchema],
     cta: {
       heading: { type: String, default: "Experience the Quality Yourself" },
-      description: { type: String, default: "Latest gadgets, curated fashion aur reliable lifestyle items direct warehouse price par order karein." },
+      description: {
+        type: String,
+        default: "Latest gadgets, curated fashion aur reliable lifestyle items direct warehouse price par order karein."
+      },
       buttonText: { type: String, default: "Start Shopping Now" },
       buttonLink: { type: String, default: "/products" },
       isEnabled: { type: Boolean, default: true }

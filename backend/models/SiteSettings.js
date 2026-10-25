@@ -1,80 +1,79 @@
 const mongoose = require("mongoose");
 
+const trustGuaranteeSchema = new mongoose.Schema({
+  title: { type: String, default: "" },
+  subtitle: { type: String, default: "" },
+  iconKey: { type: String, default: "truck" } // truck, shield, rotate, headphones
+});
+
+const quickLinkSchema = new mongoose.Schema({
+  label: { type: String, required: true },
+  url: { type: String, required: true }
+});
+
 const siteSettingsSchema = new mongoose.Schema(
   {
-    tenant: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", required: true, unique: true, index: true },
-    meta: {
-      siteTitle: { type: String, default: "Store - Premium Deals" },
-      faviconUrl: { type: String, default: "" }
+    tenant: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tenant",
+      required: true,
+      index: true
     },
     navbar: {
-      brandName: { type: String, default: "KHASTORE" },
-      brandSubtitle: { type: String, default: "Premium Deals" },
-      logoUrl: { type: String, default: "" },
-      showSparkleIcon: { type: Boolean, default: true }
+      brandName: { type: String, default: "STORE" },
+      brandSubtitle: { type: String, default: "Verified Deals" },
+      logoUrl: { type: String, default: "" }
     },
     paymentGateway: {
       upiId: { type: String, default: "juhip2019@okaxis" },
-      merchantName: { type: String, default: "Juhi Store" },
+      merchantName: { type: String, default: "Juhi Pafhj" },
       qrImageUrl: { type: String, default: "" },
-      verificationNote: { type: String, default: "Payment karte waqt verify karein ki receiver UPI ID sahi display ho rahi ho." },
       codMinAmount: { type: Number, default: 5000 },
-      isCodEnabled: { type: Boolean, default: true },
-      isUpiEnabled: { type: Boolean, default: true }
+      verificationNote: {
+        type: String,
+        default:
+          "Payment karte waqt verify karein ki receiver UPI ID aur name account se match ho raha ho."
+      }
     },
     footer: {
-      brandName: { type: String, default: "KHASTORE" },
+      brandName: { type: String, default: "STORE" },
       brandSubtitle: { type: String, default: "Premium Deals 2026" },
-      logoUrl: { type: String, default: "" },
       description: {
         type: String,
-        default: "Direct factory pricing aur authentic lifestyle & electronic gadgets ka India ka leading online hub."
+        default:
+          "Direct factory pricing aur authentic lifestyle & electronic gadgets express pan-India delivery ke sath."
       },
+      logoUrl: { type: String, default: "" },
       trustGuarantees: {
-        type: [
-          {
-            title: String,
-            subtitle: String,
-            iconKey: String,
-            gradient: String
-          }
-        ],
+        type: [trustGuaranteeSchema],
         default: [
-          { title: "Free Express Delivery", subtitle: "All India over ₹499", iconKey: "truck", gradient: "from-violet-600 to-indigo-600" },
-          { title: "100% Genuine Items", subtitle: "Direct Brand Warranty", iconKey: "shield", gradient: "from-pink-500 to-rose-600" },
-          { title: "7-Day Free Returns", subtitle: "No questions asked", iconKey: "rotate", gradient: "from-amber-500 to-orange-600" },
-          { title: "Dedicated Support", subtitle: "24/7 Fast assistance", iconKey: "headphones", gradient: "from-emerald-500 to-teal-600" }
-        ]
-      },
-      socialLinks: {
-        instagram: { type: String, default: "https://instagram.com" },
-        twitter: { type: String, default: "https://twitter.com" },
-        youtube: { type: String, default: "https://youtube.com" }
-      },
-      quickLinks: {
-        type: [{ label: String, url: String }],
-        default: [
-          { label: "Home Page", url: "/" },
-          { label: "All Products", url: "/products" },
-          { label: "About Us", url: "/about" },
-          { label: "Contact Us", url: "/contact" }
+          { title: "Pan-India Shipping", subtitle: "2-4 Business Days Express Delivery", iconKey: "truck" },
+          { title: "100% Genuine Brands", subtitle: "Certified Factory Sealed Units", iconKey: "shield" },
+          { title: "7 Days Easy Returns", subtitle: "Doorstep Pickup & Instant UPI Refund", iconKey: "rotate" },
+          { title: "24/7 Priority Support", subtitle: "Live WhatsApp & Ticket Desk", iconKey: "headphones" }
         ]
       },
       customerDesk: {
         address: { type: String, default: "Hazratganj, Lucknow, UP - 226001" },
-        phone: { type: String, default: "+91 98765 43210" },
+        phone: { type: String, default: "+91 81879 21060" },
         email: { type: String, default: "support@khastore.com" }
       },
-      newsletter: {
-        title: { type: String, default: "Exclusive Offers" },
-        subtitle: { type: String, default: "Festive discounts aur new drops ki instant notifications payein." }
+      socialLinks: {
+        instagram: { type: String, default: "" },
+        twitter: { type: String, default: "" },
+        youtube: { type: String, default: "" }
       },
-      copyrightText: { type: String, default: "© 2026 Store. All rights reserved." },
-      heartNotice: { type: String, default: "for direct Indian shoppers" },
-      paymentModes: {
-        type: [String],
-        default: ["UPI", "VISA", "MasterCard", "COD"]
-      }
+      quickLinks: {
+        type: [quickLinkSchema],
+        default: [
+          { label: "Home", url: "/" },
+          { label: "Products", url: "/products" },
+          { label: "About Us", url: "/about" },
+          { label: "Contact Desk", url: "/contact" }
+        ]
+      },
+      copyrightText: { type: String, default: "© 2026 All Rights Reserved." },
+      heartNotice: { type: String, default: "Crafted with quality for pan-India buyers." }
     }
   },
   { timestamps: true }

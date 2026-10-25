@@ -1,26 +1,25 @@
 const express = require("express");
 const router = express.Router();
-const upload = require("../middlewares/upload");
+
 const authMiddleware = require("../middlewares/authMiddleware");
 const roleMiddleware = require("../middlewares/roleMiddleware");
-const { getSettings, updateSettings } = require("../controllers/settingsController");
+const tenantMiddleware = require("../middlewares/tenantMiddleware");
+const upload = require("../middlewares/upload");
+const settingsController = require("../controllers/settingsController");
 
-const adminAuth = [authMiddleware, roleMiddleware("admin")];
+// Public Get Settings
+router.get("/", tenantMiddleware, settingsController.getSettings);
 
-// 1. Public Settings Endpoint (Dynamic Navbar, Footer & Branding)
-router.get("/", getSettings);
-
-// 2. Admin Settings Update (Logos, Payment QR Image, Favicon, Title)
+// Admin Protected Update - Sirf navbarLogo file upload allowed hai
 router.put(
   "/",
-  adminAuth,
+  tenantMiddleware,
+  authMiddleware,
+  roleMiddleware("admin"),
   upload.fields([
-    { name: "navbarLogo", maxCount: 1 },
-    { name: "footerLogo", maxCount: 1 },
-    { name: "paymentQrFile", maxCount: 1 },
-    { name: "faviconFile", maxCount: 1 }
+    { name: "navbarLogo", maxCount: 1 }
   ]),
-  updateSettings
+  settingsController.updateSettings
 );
 
 module.exports = router;

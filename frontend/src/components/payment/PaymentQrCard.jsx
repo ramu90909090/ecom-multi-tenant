@@ -1,34 +1,61 @@
 import React from "react";
-import { QrCode, Copy } from "lucide-react";
+import { QrCode, ShieldCheck, AlertTriangle } from "lucide-react";
+import { useSettings } from "../../context/SettingsContext";
 import { getImageUrl } from "../../utils/productUtils";
 
-export default function PaymentQrCard({ upiId, merchantName, totalPayable, customQrUrl }) {
-  const upiIntentString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(merchantName)}&am=${totalPayable}&cu=INR`;
-  const qrImageSrc = customQrUrl
-    ? getImageUrl(customQrUrl)
-    : `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiIntentString)}`;
+export default function PaymentQrCard({ totalAmount, orderId }) {
+  const { settings } = useSettings();
+
+  const upiId = settings?.paymentGateway?.upiId || "juhip2019@okaxis";
+  const merchantName = settings?.paymentGateway?.merchantName || "Juhi Pafhj";
+  const customQrImage = settings?.paymentGateway?.qrImageUrl;
+  const verificationNote =
+    settings?.paymentGateway?.verificationNote ||
+    `Payment karte waqt verify karein ki receiver UPI ID ${upiId} (Name: ${merchantName}) hi show ho rahi ho.`;
+
+  // Fallback Dynamic Live UPI URL
+  const generatedUpiString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(
+    merchantName
+  )}&am=${totalAmount}&cu=INR&tn=Order%20${orderId || "Payment"}`;
+
+  const fallbackLiveQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+    generatedUpiString
+  )}`;
 
   return (
-    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm text-center">
-      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[11px] font-black uppercase mb-4">
-        <QrCode className="w-3.5 h-3.5" /> Instant Scan & Pay
+    <div className="bg-white rounded-3xl border border-slate-100 p-6 space-y-4 shadow-sm text-center">
+      <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-extrabold rounded-full border border-emerald-100">
+        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+        <span>Official Verified Payment Scanner</span>
       </div>
 
-      <div className="w-48 h-48 mx-auto bg-slate-50 border border-slate-200 p-2 rounded-2xl mb-4">
-        <img src={qrImageSrc} alt="Payment QR" className="w-full h-full object-contain rounded-xl" />
+      <div className="w-56 h-56 mx-auto bg-slate-50 rounded-2xl border-2 border-slate-200 p-3 flex items-center justify-center overflow-hidden shadow-inner">
+        {customQrImage ? (
+          <img
+            src={getImageUrl(customQrImage)}
+            alt="Bank QR"
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <img
+            src={fallbackLiveQrUrl}
+            alt="Live UPI QR"
+            className="w-full h-full object-contain"
+          />
+        )}
       </div>
 
-      <p className="text-xs font-bold text-slate-800">{merchantName}</p>
-      <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 mt-1">
-        <span>UPI: <b>{upiId}</b></span>
-        <button
-          type="button"
-          onClick={() => navigator.clipboard.writeText(upiId)}
-          className="text-indigo-600 hover:text-indigo-700"
-          title="Copy UPI"
-        >
-          <Copy className="w-3.5 h-3.5" />
-        </button>
+      <div className="space-y-1">
+        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Receiver UPI VPA</p>
+        <p className="text-base font-black text-slate-900 font-mono">{upiId}</p>
+        <p className="text-xs text-indigo-600 font-extrabold">Name: {merchantName}</p>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-left flex items-start space-x-2.5">
+        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-amber-800 leading-relaxed font-semibold">
+          {verificationNote}
+        </p>
       </div>
     </div>
   );

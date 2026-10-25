@@ -19,9 +19,11 @@ import { getImageUrl } from "../utils/productUtils";
 export default function Footer() {
   const { settings, tenant } = useSettings();
   const f = settings?.footer;
-  const storeName = f?.brandName || settings?.navbar?.brandName || tenant?.storeName || "KHASTORE";
-  const brandSubtitle = f?.brandSubtitle || settings?.navbar?.brandSubtitle || "Premium Deals 2026";
-  const logoUrl = f?.logoUrl || settings?.navbar?.logoUrl;
+
+  // Footer me wahi logo aur name render hoga jo Navbar me use ho raha hai
+  const storeName = settings?.navbar?.brandName || tenant?.storeName || "KHASTORE";
+  const brandSubtitle = settings?.navbar?.brandSubtitle || f?.brandSubtitle || "Premium Deals 2026";
+  const logoUrl = settings?.navbar?.logoUrl; // Exactly same logo as Navbar
 
   const [newsletterEmail, setNewsletterEmail] = useState("");
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -111,12 +113,20 @@ export default function Footer() {
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-12">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-10">
           
-          {/* Brand Col (5 cols) */}
+          {/* Brand Col (Navbar ka hi Logo & Name yahan aayega) */}
           <div className="lg:col-span-5 space-y-4">
             <Link to="/" className="inline-flex items-center space-x-3 group">
               {logoUrl ? (
-                <div className="w-11 h-11 rounded-2xl bg-slate-900 p-1 border border-slate-800 shadow-lg shadow-pink-500/20 group-hover:scale-105 transition-transform">
-                  <img src={getImageUrl(logoUrl)} alt={storeName} className="w-full h-full object-contain rounded-xl" />
+                <div className="w-11 h-11 rounded-2xl bg-slate-900 p-1 border border-slate-800 shadow-lg shadow-pink-500/20 group-hover:scale-105 transition-transform overflow-hidden flex items-center justify-center">
+                  <img
+                    src={getImageUrl(logoUrl)}
+                    alt={storeName}
+                    className="w-full h-full object-contain rounded-xl"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
                 </div>
               ) : (
                 <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-violet-600 via-pink-500 to-amber-400 p-[2px] shadow-lg shadow-pink-500/30 group-hover:scale-105 transition-transform duration-300">
@@ -140,7 +150,7 @@ export default function Footer() {
                 "Direct factory pricing aur authentic lifestyle & electronic gadgets ka leading online hub. High quality, instant pan-India dispatch ke sath."}
             </p>
 
-            {/* Social Icons (Direct SVGs - Zero Dependency Break) */}
+            {/* Social Icons (Direct SVGs) */}
             <div className="pt-2 flex items-center space-x-3">
               <a
                 href={f?.socialLinks?.instagram || "https://instagram.com"}
@@ -204,7 +214,7 @@ export default function Footer() {
             </ul>
           </div>
 
-          {/* Customer Desk (2 cols) */}
+          {/* Customer Support Desk (2 cols) */}
           <div className="lg:col-span-2 space-y-4">
             <h4 className="text-xs font-black uppercase tracking-widest text-white border-l-2 border-violet-500 pl-2">
               Customer Desk

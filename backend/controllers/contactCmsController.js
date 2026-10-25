@@ -1,10 +1,17 @@
 const ContactConfig = require("../models/ContactConfig");
 
+// Helper: Tenant-scoped config fetch ya initial seeding
 const getOrCreateConfig = async (tenantId) => {
   let config = await ContactConfig.findOne({ tenant: tenantId });
   if (!config) {
     config = await ContactConfig.create({
       tenant: tenantId,
+      banner: {
+        tagline: "24/7 Dedicated Support Channels",
+        heading: "Humse Baat Karein, Hum Hamesha Aapke Sath Hain.",
+        description: "Product inquiry, order tracking, returns ya feedback ke liye hume reach karein.",
+        isEnabled: true
+      },
       carouselCards: [
         {
           icon: "Phone",
@@ -37,6 +44,23 @@ const getOrCreateConfig = async (tenantId) => {
           gradient: "from-pink-500 to-rose-500"
         }
       ],
+      mapConfig: {
+        locationTitle: "Experience Center Location",
+        embedUrl: "https://maps.google.com/maps?q=Lucknow&t=&z=13&ie=UTF8&iwloc=&output=embed",
+        visitingHours: "Mon - Sat: 10:00 AM - 7:00 PM",
+        isEnabled: true
+      },
+      formConfig: {
+        badgeText: "Quick Ticket",
+        heading: "Send Us a Direct Message",
+        statusBadge: "Agents Online",
+        inquiryOptions: [
+          "Order Status & Tracking",
+          "Return & Refund Request",
+          "Product Information",
+          "Business Partnership"
+        ]
+      },
       faqs: [
         {
           question: "Order dispatch hone me kitna time lagta hai?",
@@ -52,15 +76,17 @@ const getOrCreateConfig = async (tenantId) => {
   return config;
 };
 
+// 1. GET Public & Admin Config
 exports.getContactConfig = async (req, res) => {
   try {
     const config = await getOrCreateConfig(req.tenant._id);
-    res.status(200).json({ success: true, data: config });
+    return res.status(200).json({ success: true, data: config });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// 2. UPDATE General Settings (Banner, Map, Form)
 exports.updateGeneralConfig = async (req, res) => {
   try {
     const config = await getOrCreateConfig(req.tenant._id);
@@ -69,20 +95,21 @@ exports.updateGeneralConfig = async (req, res) => {
     if (req.body.formConfig) config.formConfig = { ...config.formConfig, ...req.body.formConfig };
 
     await config.save();
-    res.status(200).json({ success: true, message: "General configuration updated", data: config });
+    return res.status(200).json({ success: true, message: "General settings successfully updated", data: config });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// 3. CARDS CRUD
 exports.addCard = async (req, res) => {
   try {
     const config = await getOrCreateConfig(req.tenant._id);
     config.carouselCards.push(req.body);
     await config.save();
-    res.status(201).json({ success: true, message: "Card added", data: config.carouselCards });
+    return res.status(201).json({ success: true, message: "Contact Card added", data: config.carouselCards });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -94,9 +121,9 @@ exports.updateCard = async (req, res) => {
 
     Object.assign(card, req.body);
     await config.save();
-    res.status(200).json({ success: true, message: "Card updated", data: config.carouselCards });
+    return res.status(200).json({ success: true, message: "Card updated", data: config.carouselCards });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -105,20 +132,21 @@ exports.deleteCard = async (req, res) => {
     const config = await getOrCreateConfig(req.tenant._id);
     config.carouselCards.pull({ _id: req.params.cardId });
     await config.save();
-    res.status(200).json({ success: true, message: "Card deleted", data: config.carouselCards });
+    return res.status(200).json({ success: true, message: "Card deleted", data: config.carouselCards });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// 4. FAQS CRUD
 exports.addFaq = async (req, res) => {
   try {
     const config = await getOrCreateConfig(req.tenant._id);
     config.faqs.push(req.body);
     await config.save();
-    res.status(201).json({ success: true, message: "FAQ added", data: config.faqs });
+    return res.status(201).json({ success: true, message: "FAQ added", data: config.faqs });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -130,9 +158,9 @@ exports.updateFaq = async (req, res) => {
 
     Object.assign(faq, req.body);
     await config.save();
-    res.status(200).json({ success: true, message: "FAQ updated", data: config.faqs });
+    return res.status(200).json({ success: true, message: "FAQ updated", data: config.faqs });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -141,8 +169,8 @@ exports.deleteFaq = async (req, res) => {
     const config = await getOrCreateConfig(req.tenant._id);
     config.faqs.pull({ _id: req.params.faqId });
     await config.save();
-    res.status(200).json({ success: true, message: "FAQ deleted", data: config.faqs });
+    return res.status(200).json({ success: true, message: "FAQ deleted", data: config.faqs });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

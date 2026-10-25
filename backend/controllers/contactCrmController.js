@@ -3,7 +3,7 @@ const SiteSettings = require("../models/SiteSettings");
 const { queueMessage } = require("../services/queueService");
 const { queueEmail } = require("../services/emailQueueService");
 
-// Helper: Clean Indian Mobile Number (Removes spaces, +91, dashes)
+// 10-digit Indian phone sanitizer
 const cleanPhoneNumber = (phone) => {
   if (!phone) return null;
   let cleaned = String(phone).replace(/\D/g, "");
@@ -15,70 +15,159 @@ const cleanPhoneNumber = (phone) => {
   return cleaned.length === 10 ? cleaned : null;
 };
 
-// Helper: Simple Email Validator
+// Email format validator
 const isValidEmail = (email) => {
   if (!email || typeof email !== "string") return false;
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email.trim());
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 };
 
-// WhatsApp Template for Support Inquiries
-const getInquiryWhatsAppText = ({ storeName, query, newStatus, adminNotes }) => {
+// Dynamic Store Name Resolver
+const getStoreName = async (tenant) => {
+  try {
+    if (!tenant?._id) return "Store Support";
+    const settings = await SiteSettings.findOne({ tenant: tenant._id });
+    return settings?.navbar?.brandName || tenant?.storeName || "Store Support";
+  } catch {
+    return tenant?.storeName || "Store Support";
+  }
+};
+
+// ==========================================
+// TEMPLATES: TICKET SUBMITTED BY CUSTOMER
+// ==========================================
+const getInquiryReceivedWhatsAppText = ({ storeName, query, ticketId }) => (
+  `🎫 *TICKET SUBMITTED - ${storeName.toUpperCase()}*\n\n` +
+  `Namaste *${query.name || "Customer"}*ji,\n\n` +
+  `Aapki inquiry hamare support desk par successfully submit ho gayi hai.\n\n` +
+  `📌 *Ticket ID:* #${ticketId}\n` +
+  `📌 *Subject:* ${query.subject || "General Inquiry"}\n` +
+  `📌 *Status:* PENDING REVIEW\n\n` +
+  `📝 *Aapka Message:* "${(query.message || "").slice(0, 100)}..."\n\n` +
+  `Humari team jald hi aapse sampark karegi.\n` +
+  `Dhanyawad,\n*${storeName}*`
+);
+
+const getInquiryReceivedEmailHtml = ({ storeName, query, ticketId }) => `
+  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+    <div style="text-align: center; padding-bottom: 16px; border-bottom: 2px solid #f1f5f9;">
+      <h2 style="color: #4f46e5; margin: 0;">${storeName}</h2>
+      <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">Customer Support Desk</p>
+    </div>
+    <div style="padding: 24px 0;">
+      <p style="font-size: 15px; color: #1e293b;">Namaste <b>${query.name || "Customer"}</b>,</p>
+      <p style="font-size: 14px; color: #475569; line-height: 1.6;">
+        Aapka support ticket register kar liya gaya hai. Humari priority desk jald aapse sampark karegi.
+      </p>
+      <div style="background-color: #f8fafc; border-radius: 12px; padding: 16px; margin: 20px 0; border: 1px solid #e2e8f0;">
+        <p style="margin: 0 0 6px; font-size: 12px; color: #64748b; font-weight: bold;">TICKET REFERENCE: #${ticketId}</p>
+        <p style="margin: 0 0 4px; font-size: 14px; color: #1e293b;"><b>Subject:</b> ${query.subject || "General Inquiry"}</p>
+        <p style="margin: 0; font-size: 13px; color: #64748b;"><b>Status:</b> <span style="color: #f59e0b; font-weight: bold;">Pending Review</span></p>
+      </div>
+      <p style="font-size: 13px; color: #475569; font-style: italic;">"${query.message}"</p>
+    </div>
+    <div style="text-align: center; padding-top: 16px; border-top: 1px solid #f1f5f9; color: #94a3b8; font-size: 12px;">
+      <p style="margin: 0;">Thank you for contacting <b>${storeName}</b>.</p>
+    </div>
+  </div>
+`;
+
+// ==========================================
+// TEMPLATES: STATUS UPDATED BY ADMIN
+// ==========================================
+const getInquiryStatusWhatsAppText = ({ storeName, query, newStatus, adminNotes, ticketId }) => {
   let statusEmoji = "🎫";
   if (newStatus === "Resolved") statusEmoji = "✅";
   else if (newStatus === "In Progress") statusEmoji = "⚙️";
   else if (newStatus === "Closed") statusEmoji = "📁";
 
   return (
-    `${statusEmoji} *SUPPORT TICKET UPDATE - ${storeName.toUpperCase()}*\n\n` +
+    `${statusEmoji} *TICKET STATUS UPDATE - ${storeName.toUpperCase()}*\n\n` +
     `Namaste *${query.name || "Customer"}*ji,\n\n` +
-    `Aapke inquiry ticket (*${query.subject || "General Inquiry"}*) ka status update hua hai:\n` +
-    `📍 *Status:* *${newStatus.toUpperCase()}*\n` +
+    `Aapke support ticket (*#${ticketId}*) ka status update kiya gaya hai:\n\n` +
+    `📍 *New Status:* *${newStatus.toUpperCase()}*\n` +
     (adminNotes ? `💬 *Support Note:* ${adminNotes}\n` : "") +
-    (query.message ? `\n📝 *Aapki Query:* "${query.message.slice(0, 80)}..."\n` : "") +
-    `\nKisi bhi anya sahayata ke liye hamare customer care se sampark karein.\n` +
+    `📌 *Subject:* ${query.subject || "General Inquiry"}\n\n` +
+    `Kisi bhi anya sahayata ke liye hamare desk par reply karein.\n` +
     `Team *${storeName}*`
   );
 };
 
-// HTML Email Template for Support Inquiries
-const getInquiryEmailHtml = ({ storeName, query, newStatus, adminNotes }) => `
-  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 20px; background-color: #ffffff;">
-    <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f1f5f9;">
-      <h2 style="color: #4f46e5; margin: 0; font-size: 24px;">${storeName}</h2>
+const getInquiryStatusEmailHtml = ({ storeName, query, newStatus, adminNotes, ticketId }) => `
+  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+    <div style="text-align: center; padding-bottom: 16px; border-bottom: 2px solid #f1f5f9;">
+      <h2 style="color: #4f46e5; margin: 0;">${storeName}</h2>
       <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">Customer Support Desk</p>
     </div>
     <div style="padding: 24px 0;">
       <p style="font-size: 15px; color: #1e293b;">Namaste <b>${query.name || "Customer"}</b>,</p>
       <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-        Aapke dwara bheji gayi inquiry ka status update kiya gaya hai:
+        Aapke inquiry ticket <b>#${ticketId}</b> ka status update hua hai:
       </p>
-      <div style="background-color: #f8fafc; border-radius: 14px; padding: 18px; margin: 20px 0; border: 1px solid #e2e8f0;">
-        <p style="margin: 0 0 6px; font-size: 12px; color: #64748b; font-weight: bold; text-transform: uppercase;">Ticket Subject: ${query.subject || "Customer Inquiry"}</p>
-        <p style="margin: 0; font-size: 20px; font-weight: 900; color: ${newStatus === "Resolved" ? "#16a34a" : "#4f46e5"};">${newStatus}</p>
-        ${adminNotes ? `<p style="margin: 12px 0 0; font-size: 13px; color: #1e293b; background: #fff; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;"><b>Response / Memo:</b> ${adminNotes}</p>` : ""}
+      <div style="background-color: #f8fafc; border-radius: 12px; padding: 18px; margin: 20px 0; border: 1px solid #e2e8f0;">
+        <p style="margin: 0 0 6px; font-size: 12px; color: #64748b; font-weight: bold;">TICKET: #${ticketId} | ${query.subject || "Inquiry"}</p>
+        <p style="margin: 0; font-size: 22px; font-weight: 900; color: ${newStatus === "Resolved" ? "#16a34a" : "#4f46e5"};">${newStatus}</p>
+        ${adminNotes ? `<div style="margin-top: 12px; background: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; color: #1e293b;"><b>Support Response:</b> ${adminNotes}</div>` : ""}
       </div>
-      ${query.message ? `<p style="font-size: 12px; color: #94a3b8; font-style: italic;">Original Message: "${query.message}"</p>` : ""}
+      <p style="font-size: 12px; color: #94a3b8; font-style: italic;">Original Message: "${query.message}"</p>
     </div>
     <div style="text-align: center; padding-top: 16px; border-top: 1px solid #f1f5f9; color: #94a3b8; font-size: 12px;">
-      <p style="margin: 0;">Thank you for contacting <b>${storeName} Support</b>!</p>
+      <p style="margin: 0;">Thank you for contacting <b>${storeName}</b>.</p>
     </div>
   </div>
 `;
 
 // =========================================================================
-// 1. SUBMIT PUBLIC TICKET QUERY
+// 1. SUBMIT PUBLIC QUERY (Queue WhatsApp & Email)
 // =========================================================================
+// Submit query function in server/controllers/contactCrmController.js
 exports.submitQuery = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
+    const { name, email, phone, subject, message } = req.body;
+
     const query = await ContactQuery.create({
       tenant: tenantId,
-      ...req.body
+      name,
+      email,
+      phone,
+      subject: subject || "General Inquiry",
+      message,
+      status: "Pending"
     });
+
+    const storeName = await getStoreName(req.tenant);
+    const ticketId = query._id.toString().slice(-6).toUpperCase();
+
+    // 1. WhatsApp Confirmation
+    const validPhone = cleanPhoneNumber(phone);
+    if (validPhone) {
+      const waMsg = getInquiryReceivedWhatsAppText({ storeName, query, ticketId });
+      await queueMessage({
+        tenantId,
+        orderId: `TICKET-${ticketId}`,
+        recipientNumber: validPhone,
+        recipientType: "customer",
+        triggerType: "inquiry_created",
+        messageBody: waMsg
+      });
+    }
+
+    // 2. Email Confirmation
+    if (isValidEmail(email)) {
+      const emailHtml = getInquiryReceivedEmailHtml({ storeName, query, ticketId });
+      queueEmail({
+        tenantId,
+        to: email.trim().toLowerCase(),
+        subject: `✅ Support Ticket Received [#${ticketId}] - ${storeName}`,
+        htmlBody: emailHtml,
+        triggerType: "inquiry_created",
+        referenceId: query._id.toString()
+      }).catch((err) => console.warn("Email queue warning:", err.message));
+    }
+
     return res.status(201).json({
       success: true,
-      message: "Ticket created successfully. Our team will contact you shortly.",
+      message: "Ticket created successfully. Alerts dispatched via WhatsApp & Email.",
       data: query
     });
   } catch (error) {
@@ -88,24 +177,16 @@ exports.submitQuery = async (req, res) => {
 };
 
 // =========================================================================
-// 2. GET ALL QUERIES (With Search & Pagination)
+// 2. GET ALL QUERIES (Admin CRM)
 // =========================================================================
 exports.getAllQueries = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
     let filter = tenantId ? { tenant: tenantId } : {};
 
-    const {
-      status,
-      search,
-      page = 1,
-      limit = 10,
-      sortBy = "createdAt-desc"
-    } = req.query;
+    const { status, search, page = 1, limit = 10 } = req.query;
 
-    if (status && status !== "All") {
-      filter.status = status;
-    }
+    if (status && status !== "All") filter.status = status;
 
     if (search && search.trim()) {
       const regex = { $regex: search.trim(), $options: "i" };
@@ -118,52 +199,44 @@ exports.getAllQueries = async (req, res) => {
       ];
     }
 
-    let sortOptions = { createdAt: -1 };
-    if (sortBy === "oldest") sortOptions = { createdAt: 1 };
-
     const currentPage = Math.max(1, parseInt(page, 10) || 1);
     const perPage = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
     const skip = (currentPage - 1) * perPage;
 
-    const [queries, totalQueries, pendingCount, inProgressCount, resolvedCount] =
+    const [queries, totalQueries, pendingCount, inProgressCount, resolvedCount, closedCount] =
       await Promise.all([
-        ContactQuery.find(filter)
-          .sort(sortOptions)
-          .skip(skip)
-          .limit(perPage),
+        ContactQuery.find(filter).sort({ createdAt: -1 }).skip(skip).limit(perPage),
         ContactQuery.countDocuments(filter),
         ContactQuery.countDocuments({ ...filter, status: "Pending" }),
         ContactQuery.countDocuments({ ...filter, status: "In Progress" }),
-        ContactQuery.countDocuments({ ...filter, status: { $in: ["Resolved", "Closed"] } })
+        ContactQuery.countDocuments({ ...filter, status: "Resolved" }),
+        ContactQuery.countDocuments({ ...filter, status: "Closed" })
       ]);
-
-    const totalPages = Math.ceil(totalQueries / perPage) || 1;
 
     return res.status(200).json({
       success: true,
-      count: queries.length,
       data: queries,
       pagination: {
         total: totalQueries,
         page: currentPage,
         limit: perPage,
-        totalPages
+        totalPages: Math.ceil(totalQueries / perPage) || 1
       },
       stats: {
         total: totalQueries,
         pending: pendingCount,
         inProgress: inProgressCount,
-        resolved: resolvedCount
+        resolved: resolvedCount,
+        closed: closedCount
       }
     });
   } catch (error) {
-    console.error("getAllQueries Error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
 // =========================================================================
-// 3. UPDATE QUERY STATUS (WITH CRASH-PROOF WHATSAPP & EMAIL SAFEGUARDS)
+// 3. UPDATE QUERY STATUS (Admin updates status -> Triggers WhatsApp & Email)
 // =========================================================================
 exports.updateQueryStatus = async (req, res) => {
   try {
@@ -185,85 +258,62 @@ exports.updateQueryStatus = async (req, res) => {
     const query = await ContactQuery.findOneAndUpdate(queryFilter, updateData, { new: true });
     if (!query) return res.status(404).json({ success: false, message: "Ticket nahi mila." });
 
-    // Store Name lookup with safe fallback
-    let storeName = req.tenant?.storeName || "KHASTORE";
-    try {
-      const settings = await SiteSettings.findOne({ tenant: tenantId });
-      if (settings?.navbar?.brandName) storeName = settings.navbar.brandName;
-    } catch (e) {
-      // Non-blocking fallback
+    const storeName = await getStoreName(req.tenant);
+    const newStatus = status || query.status;
+    const ticketId = query._id.toString().slice(-6).toUpperCase();
+
+    // Trigger WhatsApp status update message & create WhatsAppLog entry
+    const validPhone = cleanPhoneNumber(query.phone);
+    if (validPhone) {
+      const waMsg = getInquiryStatusWhatsAppText({
+        storeName,
+        query,
+        newStatus,
+        adminNotes: adminNotes !== undefined ? adminNotes : query.adminNotes,
+        ticketId
+      });
+
+      // queueMessage calls WhatsappLog.create and triggers FIFO queue
+      await queueMessage({
+        tenantId,
+        orderId: `TICKET-${ticketId}`,
+        recipientNumber: validPhone,
+        recipientType: "customer",
+        triggerType: "inquiry_status_updated",
+        messageBody: waMsg
+      });
+      console.log(`✅ WhatsApp queued for Ticket #${ticketId} to ${validPhone}`);
+    } else {
+      console.warn(`⚠️ Ticket #${ticketId}: Phone "${query.phone}" invalid hai, WhatsApp skipped.`);
     }
 
-    const newTicketStatus = status || query.status || "Updated";
+    // Trigger Email status update
+    if (isValidEmail(query.email)) {
+      const emailHtml = getInquiryStatusEmailHtml({
+        storeName,
+        query,
+        newStatus,
+        adminNotes: adminNotes !== undefined ? adminNotes : query.adminNotes,
+        ticketId
+      });
 
-    // -------------------------------------------------------------
-    // SAFEGUARD 1: WhatsApp Notification (Non-blocking Try-Catch)
-    // -------------------------------------------------------------
-    try {
-      const validPhone = cleanPhoneNumber(query.phone);
-      if (validPhone) {
-        const waMsg = getInquiryWhatsAppText({
-          storeName,
-          query,
-          newStatus: newTicketStatus,
-          adminNotes: adminNotes !== undefined ? adminNotes : query.adminNotes
-        });
-
-        // Background queue insert (Never blocks response)
-        queueMessage({
-          tenantId,
-          orderId: `TICKET-${query._id.toString().slice(-6)}`,
-          recipientNumber: validPhone,
-          recipientType: "customer",
-          triggerType: "inquiry_status_updated",
-          messageBody: waMsg
-        }).catch((err) => {
-          console.warn("⚠️ WhatsApp queue non-fatal warning:", err.message);
-        });
-      } else {
-        console.log(`ℹ️ Ticket #${query._id}: Mobile number "${query.phone}" 10-digit standard format me nahi hai, WhatsApp skip kiya gaya.`);
-      }
-    } catch (waErr) {
-      console.warn("⚠️ WhatsApp dispatch safe catch:", waErr.message);
+      queueEmail({
+        tenantId,
+        to: query.email.trim().toLowerCase(),
+        subject: `🎫 Ticket Update [#${ticketId}] [${newStatus}] - ${storeName}`,
+        htmlBody: emailHtml,
+        triggerType: "inquiry_status",
+        referenceId: query._id.toString()
+      }).catch((err) => console.warn("Email queue warning:", err.message));
     }
 
-    // -------------------------------------------------------------
-    // SAFEGUARD 2: Email Notification (Non-blocking Try-Catch)
-    // -------------------------------------------------------------
-    try {
-      if (isValidEmail(query.email)) {
-        const emailHtml = getInquiryEmailHtml({
-          storeName,
-          query,
-          newStatus: newTicketStatus,
-          adminNotes: adminNotes !== undefined ? adminNotes : query.adminNotes
-        });
-
-        queueEmail({
-          tenantId,
-          to: query.email.trim().toLowerCase(),
-          subject: `🎫 Support Ticket Update [${newTicketStatus}]: ${query.subject || "Customer Inquiry"}`,
-          htmlBody: emailHtml,
-          triggerType: "inquiry_status",
-          referenceId: query._id.toString()
-        }).catch((err) => {
-          console.warn("⚠️ Email queue non-fatal warning:", err.message);
-        });
-      } else {
-        console.log(`ℹ️ Ticket #${query._id}: Email "${query.email}" invalid hai, Email skip kiya gaya.`);
-      }
-    } catch (emailErr) {
-      console.warn("⚠️ Email dispatch safe catch:", emailErr.message);
-    }
-
-    // Har halat me success 200 return karein taaki admin UI refresh ho sake
     return res.status(200).json({
       success: true,
-      message: "Ticket status safaltapoorvak update ho gaya!",
+      message: "Ticket status update ho gaya aur customer ko WhatsApp & Email alerts queue ho gaye!",
       data: query
     });
   } catch (error) {
-    console.error("updateQueryStatus Fatal Error:", error);
+    console.error("updateQueryStatus Error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -282,10 +332,9 @@ exports.deleteQuery = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Ticket safaltapoorvak delete ho gaya."
+      message: "Ticket delete kar diya gaya."
     });
   } catch (error) {
-    console.error("deleteQuery Error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -308,7 +357,7 @@ exports.bulkDeleteQueries = async (req, res) => {
     } else {
       return res.status(400).json({
         success: false,
-        message: "Delete karne ke liye ticket IDs specify karein."
+        message: "Delete karne ke liye valid ticket IDs select karein."
       });
     }
 
@@ -320,7 +369,6 @@ exports.bulkDeleteQueries = async (req, res) => {
       deletedCount: result.deletedCount
     });
   } catch (error) {
-    console.error("bulkDeleteQueries Error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };

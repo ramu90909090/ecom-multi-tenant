@@ -1,86 +1,58 @@
 import React, { useState, useEffect } from "react";
-import API from "../../api/axios";
 import {
   Users,
-  UserCheck,
-  ShieldAlert,
   Search,
   Filter,
-  RefreshCw,
-  Plus,
-  Edit,
+  UserPlus,
   Trash2,
-  X,
+  Edit3,
+  Send,
+  MessageCircle,
+  Mail,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
   ChevronLeft,
   ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Shield,
-  Key,
-  Mail,
-  Phone,
-  MapPin,
-  CheckCircle2
+  RefreshCw,
+  X,
+  Lock,
+  Smartphone
 } from "lucide-react";
+import API from "../../api/axios";
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ totalUsers: 0, adminCount: 0, customerCount: 0, verifiedCount: 0 });
 
-  // Search & Filter
+  // Filters & Pagination
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("All");
   const [verifiedFilter, setVerifiedFilter] = useState("All");
-
-  // Pagination (10, 25, 50, 100)
-  const [currentPage, setCurrentPage] = useState(1);
+  const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
-  const [pagination, setPagination] = useState({
-    total: 0,
-    page: 1,
-    limit: 10,
-    totalPages: 1
-  });
+  const [totalPages, setTotalPages] = useState(1);
 
-  const [stats, setStats] = useState({
-    totalUsers: 0,
-    totalAdmins: 0,
-    totalCustomers: 0,
-    verifiedCount: 0
-  });
-
-  // Modal State
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState(null);
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    mobile: "",
-    password: "",
-    role: "user",
-    isVerified: true,
-    address: "",
-    district: "",
-    state: "Uttar Pradesh",
-    pincode: ""
-  });
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState("");
+  // Modals
+  const [userModal, setUserModal] = useState({ open: false, isEdit: false, data: {} });
+  const [broadcastModal, setBroadcastModal] = useState({ open: false, user: null, subject: "", messageText: "" });
+  const [sendingBroadcast, setSendingBroadcast] = useState(false);
 
   const fetchUsers = async () => {
-    setLoading(true);
     try {
+      setLoading(true);
       const params = new URLSearchParams();
+      params.append("page", page);
+      params.append("limit", limit);
       if (search.trim()) params.append("search", search.trim());
       if (roleFilter !== "All") params.append("role", roleFilter);
       if (verifiedFilter !== "All") params.append("isVerified", verifiedFilter);
-      params.append("page", currentPage);
-      params.append("limit", limit);
 
       const res = await API.get(`/users?${params.toString()}`);
       if (res.data?.success) {
         setUsers(res.data.data || []);
-        if (res.data.pagination) setPagination(res.data.pagination);
+        setTotalPages(res.data.pagination?.totalPages || 1);
         if (res.data.stats) setStats(res.data.stats);
       }
     } catch (err) {
@@ -92,290 +64,254 @@ export default function AdminUsers() {
 
   useEffect(() => {
     fetchUsers();
-  }, [currentPage, limit, roleFilter, verifiedFilter]);
+  }, [page, limit, roleFilter, verifiedFilter]);
 
-  const handleSearchSubmit = (e) => {
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPage(1);
+      fetchUsers();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Handle Save / Edit User
+  const handleSaveUser = async (e) => {
     e.preventDefault();
-    setCurrentPage(1);
-    fetchUsers();
-  };
-
-  const handleOpenAddModal = () => {
-    setEditingUser(null);
-    setFormData({
-      name: "",
-      email: "",
-      mobile: "",
-      password: "",
-      role: "user",
-      isVerified: true,
-      address: "",
-      district: "",
-      state: "Uttar Pradesh",
-      pincode: ""
-    });
-    setModalError("");
-    setModalOpen(true);
-  };
-
-  const handleOpenEditModal = (u) => {
-    setEditingUser(u);
-    setFormData({
-      name: u.name || "",
-      email: u.email || "",
-      mobile: u.mobile || "",
-      password: "", // blank rakhne par purana password change nahi hoga
-      role: u.role || "user",
-      isVerified: u.isVerified !== undefined ? u.isVerified : true,
-      address: u.address || "",
-      district: u.district || "",
-      state: u.state || "Uttar Pradesh",
-      pincode: u.pincode || ""
-    });
-    setModalError("");
-    setModalOpen(true);
-  };
-
-  const handleFormSubmit = async (e) => {
-    e.preventDefault();
-    setModalLoading(true);
-    setModalError("");
-
     try {
-      if (editingUser) {
-        await API.put(`/users/${editingUser._id}`, formData);
-        alert("✅ User details safaltapoorvak update ho gayi!");
+      if (userModal.isEdit) {
+        await API.put(`/users/${userModal.data._id}`, userModal.data);
+        alert("✅ User details update ho gayi aur notification send kar diya gaya!");
       } else {
-        await API.post("/users", formData);
-        alert("✅ Naya User create ho gaya!");
+        await API.post("/users", userModal.data);
+        alert("✅ Naya user create ho gaya aur welcome alert bhej diya gaya!");
       }
-      setModalOpen(false);
-      setEditingUser(null);
+      setUserModal({ open: false, isEdit: false, data: {} });
       fetchUsers();
     } catch (err) {
-      setModalError(err.response?.data?.message || err.message || "Failed to save user.");
-    } finally {
-      setModalLoading(false);
+      alert("Error: " + (err.response?.data?.message || err.message));
     }
   };
 
+  // Handle Delete User
   const handleDeleteUser = async (id, name) => {
-    if (window.confirm(`Kya aap sach me user '${name}' ko delete karna chahte hain?`)) {
-      try {
-        const res = await API.delete(`/users/${id}`);
-        alert(res.data?.message || "User delete ho gaya!");
-        fetchUsers();
-      } catch (err) {
-        alert(`❌ Delete failed: ${err.response?.data?.message || err.message}`);
-      }
+    if (!window.confirm(`Kya aap sach me user "${name}" ko delete karna chahte hain?`)) return;
+    try {
+      await API.delete(`/users/${id}`);
+      fetchUsers();
+    } catch (err) {
+      alert("Delete Error: " + (err.response?.data?.message || err.message));
+    }
+  };
+
+  // Handle Custom Dual Broadcast (WhatsApp + Email)
+  const handleSendBroadcast = async (e) => {
+    e.preventDefault();
+    if (!broadcastModal.messageText.trim()) return;
+
+    try {
+      setSendingBroadcast(true);
+      const res = await API.post("/users/send-custom-notification", {
+        userId: broadcastModal.user._id,
+        subject: broadcastModal.subject,
+        messageText: broadcastModal.messageText
+      });
+      alert(res.data?.message || "Message dispatched successfully!");
+      setBroadcastModal({ open: false, user: null, subject: "", messageText: "" });
+    } catch (err) {
+      alert("Dispatch failed: " + (err.response?.data?.message || err.message));
+    } finally {
+      setSendingBroadcast(false);
     }
   };
 
   return (
     <div className="p-6 sm:p-8 space-y-6">
-      
-      {/* 1. Top Header */}
+      {/* 1. Header & Actions */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            User Accounts & Permissions
-          </h1>
+          <div className="flex items-center space-x-2">
+            <Users className="w-6 h-6 text-indigo-600" />
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+              Customer & User Administration
+            </h1>
+          </div>
           <p className="text-xs text-slate-400 font-bold mt-0.5">
-            Manage customer accounts, promote managers, and monitor verified logins
+            Multi-tenant user directory, security profile controls aur dual WhatsApp-Email notifications
           </p>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center space-x-2">
           <button
             onClick={fetchUsers}
-            className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
-            title="Refresh Users"
+            className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer"
+            title="Refresh List"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
           <button
-            onClick={handleOpenAddModal}
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-indigo-600/20 active:scale-95 transition cursor-pointer"
+            onClick={() =>
+              setUserModal({
+                open: true,
+                isEdit: false,
+                data: { name: "", email: "", mobile: "", password: "", role: "user", isVerified: true }
+              })
+            }
+            className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:opacity-95 text-white text-xs font-bold rounded-xl shadow-md flex items-center space-x-1.5 cursor-pointer"
           >
-            <Plus className="w-4 h-4" /> Add User
+            <UserPlus className="w-4 h-4" />
+            <span>Add New User</span>
           </button>
         </div>
       </div>
 
-      {/* 2. KPI Cards */}
+      {/* 2. KPI Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0">
-            <Users className="w-6 h-6" />
+        <div className="bg-white p-4.5 rounded-2xl border border-slate-100 shadow-sm flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <Users className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-bold text-slate-400 uppercase">Total Users</p>
-            <h3 className="text-xl sm:text-2xl font-black text-slate-900">{stats.totalUsers}</h3>
+            <span className="text-[11px] font-bold text-slate-400 block">Total Tenant Users</span>
+            <p className="text-lg font-black text-slate-900">{stats.totalUsers}</p>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0">
-            <UserCheck className="w-6 h-6" />
+        <div className="bg-white p-4.5 rounded-2xl border border-slate-100 shadow-sm flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-bold text-slate-400 uppercase">Verified Accounts</p>
-            <h3 className="text-xl sm:text-2xl font-black text-slate-900">{stats.verifiedCount}</h3>
+            <span className="text-[11px] font-bold text-slate-400 block">Verified Accounts</span>
+            <p className="text-lg font-black text-emerald-600">{stats.verifiedCount}</p>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center shrink-0">
-            <Users className="w-6 h-6" />
+        <div className="bg-white p-4.5 rounded-2xl border border-slate-100 shadow-sm flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+            <Users className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-bold text-slate-400 uppercase">Customers</p>
-            <h3 className="text-xl sm:text-2xl font-black text-slate-900">{stats.totalCustomers}</h3>
+            <span className="text-[11px] font-bold text-slate-400 block">Shoppers / Customers</span>
+            <p className="text-lg font-black text-violet-600">{stats.customerCount}</p>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center shrink-0">
-            <Shield className="w-6 h-6" />
+        <div className="bg-white p-4.5 rounded-2xl border border-slate-100 shadow-sm flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+            <Lock className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-[11px] font-bold text-slate-400 uppercase">Admin Staff</p>
-            <h3 className="text-xl sm:text-2xl font-black text-slate-900">{stats.totalAdmins}</h3>
+            <span className="text-[11px] font-bold text-slate-400 block">Store Admins</span>
+            <p className="text-lg font-black text-amber-600">{stats.adminCount}</p>
           </div>
         </div>
       </div>
 
-      {/* 3. Search & Toolbar */}
-      <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          
-          {/* Search Box */}
-          <form onSubmit={handleSearchSubmit} className="md:col-span-5 relative">
+      {/* 3. Toolbar: Search, Filters & Limits */}
+      <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          <div className="relative w-full sm:w-64">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input
               type="text"
-              placeholder="Search by Name, Email, or Mobile..."
+              placeholder="Search by Name, Email, Phone..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-16 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-xl text-xs font-semibold outline-none transition"
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold outline-none focus:bg-white focus:border-indigo-500"
             />
-            <button
-              type="submit"
-              className="absolute right-1 top-1 bottom-1 px-3 bg-slate-900 text-white text-[11px] font-bold rounded-lg hover:bg-black transition cursor-pointer"
-            >
-              Search
-            </button>
-          </form>
-
-          {/* Role Filter */}
-          <div className="md:col-span-3">
-            <select
-              value={roleFilter}
-              onChange={(e) => {
-                setRoleFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full py-2 px-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-xl text-xs font-semibold outline-none cursor-pointer"
-            >
-              <option value="All">All Roles</option>
-              <option value="user">User (Customer)</option>
-              <option value="manager">Manager</option>
-              <option value="admin">Administrator</option>
-            </select>
           </div>
 
-          {/* Verification Filter */}
-          <div className="md:col-span-2">
-            <select
-              value={verifiedFilter}
-              onChange={(e) => {
-                setVerifiedFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full py-2 px-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-600 rounded-xl text-xs font-semibold outline-none cursor-pointer"
-            >
-              <option value="All">All Statuses</option>
-              <option value="true">Verified Only</option>
-              <option value="false">Unverified</option>
-            </select>
-          </div>
+          <select
+            value={roleFilter}
+            onChange={(e) => {
+              setRoleFilter(e.target.value);
+              setPage(1);
+            }}
+            className="bg-slate-50 border border-slate-200 py-2 px-3 rounded-xl font-bold text-slate-700 outline-none cursor-pointer"
+          >
+            <option value="All">All Roles</option>
+            <option value="user">Customers (User)</option>
+            <option value="admin">Administrators (Admin)</option>
+          </select>
 
-          {/* Limit: 10, 25, 50, 100 */}
-          <div className="md:col-span-2 flex items-center justify-end space-x-2">
-            <span className="text-[11px] font-bold text-slate-500 whitespace-nowrap">Show:</span>
-            <select
-              value={limit}
-              onChange={(e) => {
-                setLimit(Number(e.target.value));
-                setCurrentPage(1);
-              }}
-              className="py-2 px-2.5 bg-indigo-50/70 border border-indigo-200 text-indigo-700 font-black rounded-xl text-xs outline-none cursor-pointer"
-            >
-              <option value={10}>10 / page</option>
-              <option value={25}>25 / page</option>
-              <option value={50}>50 / page</option>
-              <option value={100}>100 / page</option>
-            </select>
-          </div>
+          <select
+            value={verifiedFilter}
+            onChange={(e) => {
+              setVerifiedFilter(e.target.value);
+              setPage(1);
+            }}
+            className="bg-slate-50 border border-slate-200 py-2 px-3 rounded-xl font-bold text-slate-700 outline-none cursor-pointer"
+          >
+            <option value="All">All Statuses</option>
+            <option value="true">Verified Only</option>
+            <option value="false">Unverified / Suspended</option>
+          </select>
+        </div>
 
+        <div className="flex items-center space-x-2 w-full md:w-auto justify-end">
+          <span className="font-bold text-slate-400">Show:</span>
+          <select
+            value={limit}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+              setPage(1);
+            }}
+            className="bg-slate-50 border border-slate-200 py-1.5 px-3 rounded-xl font-black text-slate-800 outline-none cursor-pointer"
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
         </div>
       </div>
 
       {/* 4. Users Table */}
-      <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50 border-b border-slate-100 text-[11px] font-black text-slate-700 uppercase">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 border-b border-slate-100 uppercase text-slate-500 font-bold text-[11px]">
               <tr>
-                <th className="p-4">User Details</th>
-                <th className="p-4">Mobile & Location</th>
+                <th className="p-4">User</th>
+                <th className="p-4">Contact Phone</th>
                 <th className="p-4">Role</th>
-                <th className="p-4">Verification</th>
-                <th className="p-4">Registered Date</th>
+                <th className="p-4">Status</th>
+                <th className="p-4">Created On</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 font-medium">
+            <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="6" className="p-12 text-center text-slate-400 font-bold">
-                    <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                    Fetching user records...
+                  <td colSpan="6" className="text-center py-16 text-slate-400 font-bold">
+                    Loading users list...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="p-12 text-center text-slate-400 font-bold">
-                    Koi user match nahi hua. Search reset karein.
+                  <td colSpan="6" className="text-center py-16 text-slate-400 font-bold">
+                    Koi user nahi mila.
                   </td>
                 </tr>
               ) : (
                 users.map((u) => (
                   <tr key={u._id} className="hover:bg-slate-50/60 transition">
-                    <td className="p-4 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-violet-600 to-pink-500 text-white font-black text-sm flex items-center justify-center shrink-0 uppercase shadow-sm">
-                        {u.name?.charAt(0) || "U"}
-                      </div>
-                      <div>
-                        <p className="font-extrabold text-slate-900">{u.name}</p>
-                        <p className="text-[11px] text-slate-400 font-semibold">{u.email}</p>
-                      </div>
+                    <td className="p-4">
+                      <p className="font-bold text-slate-900">{u.name}</p>
+                      <span className="text-[11px] text-slate-400 font-normal">{u.email}</span>
                     </td>
 
-                    <td className="p-4">
-                      <p className="font-bold text-slate-800">{u.mobile || "N/A"}</p>
-                      <p className="text-[10px] text-slate-400">
-                        {u.district || u.city || "India"} {u.pincode ? `(${u.pincode})` : ""}
-                      </p>
+                    <td className="p-4 font-mono font-bold text-indigo-600">
+                      {u.mobile || "N/A"}
                     </td>
 
                     <td className="p-4">
                       <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                        className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase border ${
                           u.role === "admin"
-                            ? "bg-purple-50 text-purple-700 border border-purple-200"
-                            : u.role === "manager"
-                            ? "bg-blue-50 text-blue-700 border border-blue-200"
-                            : "bg-slate-100 text-slate-700"
+                            ? "bg-amber-50 text-amber-700 border-amber-200"
+                            : "bg-indigo-50 text-indigo-700 border-indigo-200"
                         }`}
                       >
                         {u.role}
@@ -383,38 +319,72 @@ export default function AdminUsers() {
                     </td>
 
                     <td className="p-4">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          u.isVerified
-                            ? "bg-emerald-50 text-emerald-700"
-                            : "bg-amber-50 text-amber-700"
-                        }`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${u.isVerified ? "bg-emerald-500" : "bg-amber-500"}`} />
-                        {u.isVerified ? "Verified" : "Unverified"}
-                      </span>
+                      {u.isVerified ? (
+                        <span className="inline-flex items-center space-x-1 text-emerald-600 font-bold text-[11px]">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Verified</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 text-slate-400 font-bold text-[11px]">
+                          <XCircle className="w-3.5 h-3.5" />
+                          <span>Unverified</span>
+                        </span>
+                      )}
                     </td>
 
-                    <td className="p-4 text-[11px] text-slate-500 font-semibold">
+                    <td className="p-4 text-slate-400 font-mono text-[11px]">
                       {new Date(u.createdAt).toLocaleDateString("en-IN", {
                         dateStyle: "medium"
                       })}
                     </td>
 
-                    <td className="p-4 text-right space-x-1 whitespace-nowrap">
+                    <td className="p-4 text-right space-x-1.5 whitespace-nowrap">
+                      {/* Direct Custom Notification Button */}
                       <button
-                        onClick={() => handleOpenEditModal(u)}
-                        className="p-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition cursor-pointer"
+                        onClick={() =>
+                          setBroadcastModal({
+                            open: true,
+                            user: u,
+                            subject: "",
+                            messageText: ""
+                          })
+                        }
+                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition cursor-pointer"
+                        title="Send Direct WhatsApp & Email Notification"
+                      >
+                        <Send className="w-4 h-4 inline" />
+                      </button>
+
+                      {/* Edit User Button */}
+                      <button
+                        onClick={() =>
+                          setUserModal({
+                            open: true,
+                            isEdit: true,
+                            data: {
+                              _id: u._id,
+                              name: u.name,
+                              email: u.email,
+                              mobile: u.mobile || "",
+                              role: u.role,
+                              isVerified: u.isVerified,
+                              newPassword: ""
+                            }
+                          })
+                        }
+                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-xl transition cursor-pointer"
                         title="Edit User"
                       >
-                        <Edit className="w-4 h-4" />
+                        <Edit3 className="w-4 h-4 inline" />
                       </button>
+
+                      {/* Delete User Button */}
                       <button
                         onClick={() => handleDeleteUser(u._id, u.name)}
-                        className="p-1.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 rounded-lg transition cursor-pointer"
+                        className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-xl transition cursor-pointer"
                         title="Delete User"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4 inline" />
                       </button>
                     </td>
                   </tr>
@@ -424,189 +394,238 @@ export default function AdminUsers() {
           </table>
         </div>
 
-        {/* 5. Pagination Bar */}
-        <div className="p-4 bg-slate-50/70 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-xs font-semibold text-slate-500">
-            Showing <b className="text-slate-800">{users.length}</b> of{" "}
-            <b className="text-slate-800">{pagination.total}</b> users • Page{" "}
-            <b className="text-slate-800">{pagination.page}</b> of{" "}
-            <b className="text-slate-800">{pagination.totalPages}</b>
-          </div>
-
-          <div className="flex items-center space-x-1.5">
+        {/* 5. Pagination */}
+        <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs font-semibold text-slate-500">
+          <span>
+            Page <b>{page}</b> of <b>{totalPages}</b>
+          </span>
+          <div className="flex items-center space-x-2">
             <button
-              onClick={() => setCurrentPage(1)}
-              disabled={currentPage <= 1 || loading}
-              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              title="First Page"
-            >
-              <ChevronsLeft className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage <= 1 || loading}
-              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              title="Previous Page"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-
-            <span className="px-4 py-1.5 text-xs font-black text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-xl">
-              {currentPage} / {pagination.totalPages}
-            </span>
-
             <button
-              onClick={() => setCurrentPage((p) => Math.min(pagination.totalPages, p + 1))}
-              disabled={currentPage >= pagination.totalPages || loading}
-              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              title="Next Page"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={() => setCurrentPage(pagination.totalPages)}
-              disabled={currentPage >= pagination.totalPages || loading}
-              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              title="Last Page"
-            >
-              <ChevronsRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* 6. Create / Edit User Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="relative max-w-xl w-full my-auto max-h-[92vh] overflow-y-auto rounded-3xl bg-white p-6 sm:p-8 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-black text-base text-slate-900">
-                {editingUser ? `Edit User: ${editingUser.name}` : "Create New User Account"}
+      {/* ========================================================================= */}
+      {/* MODAL 1: CREATE / EDIT USER                                              */}
+      {/* ========================================================================= */}
+      {userModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <form
+            onSubmit={handleSaveUser}
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-black text-sm text-slate-900">
+                {userModal.isEdit ? `Edit User: ${userModal.data.name}` : "Create New User"}
               </h3>
               <button
-                onClick={() => setModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-50 cursor-pointer"
+                type="button"
+                onClick={() => setUserModal({ open: false, isEdit: false, data: {} })}
+                className="text-slate-400 hover:text-slate-600"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {modalError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl">
-                {modalError}
-              </div>
-            )}
-
-            <form onSubmit={handleFormSubmit} className="space-y-3.5 text-xs font-bold text-slate-700">
+            <div className="text-xs space-y-3 font-bold text-slate-700">
               <div>
                 <label className="block mb-1">Full Name *</label>
                 <input
                   type="text"
                   required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 outline-none bg-slate-50/50 focus:bg-white"
+                  value={userModal.data.name || ""}
+                  onChange={(e) => setUserModal({ ...userModal, data: { ...userModal.data, name: e.target.value } })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1">Email Address *</label>
+                <input
+                  type="email"
+                  required
+                  disabled={userModal.isEdit}
+                  value={userModal.data.email || ""}
+                  onChange={(e) => setUserModal({ ...userModal, data: { ...userModal.data, email: e.target.value } })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none focus:bg-white disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1">Mobile / WhatsApp Number</label>
+                <input
+                  type="tel"
+                  placeholder="10-digit number"
+                  value={userModal.data.mobile || ""}
+                  onChange={(e) => setUserModal({ ...userModal, data: { ...userModal.data, mobile: e.target.value } })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none focus:bg-white"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block mb-1">Email Address *</label>
-                  <input
-                    type="email"
-                    required
-                    disabled={!!editingUser}
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 outline-none bg-slate-50/50 focus:bg-white disabled:bg-slate-100 disabled:cursor-not-allowed"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1">Mobile Number *</label>
-                  <input
-                    type="tel"
-                    required
-                    value={formData.mobile}
-                    onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
-                    className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 outline-none bg-slate-50/50 focus:bg-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block mb-1">
-                    {editingUser ? "New Password (Optional)" : "Password *"}
-                  </label>
-                  <input
-                    type="password"
-                    required={!editingUser}
-                    placeholder={editingUser ? "Leave blank to keep same" : "Min 6 characters"}
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 outline-none bg-slate-50/50 focus:bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1">Role Permission *</label>
+                  <label className="block mb-1">Account Role</label>
                   <select
-                    value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                    className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 bg-white outline-none cursor-pointer"
+                    value={userModal.data.role || "user"}
+                    onChange={(e) => setUserModal({ ...userModal, data: { ...userModal.data, role: e.target.value } })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none cursor-pointer"
                   >
-                    <option value="user">User (Normal Customer)</option>
-                    <option value="manager">Manager</option>
+                    <option value="user">Customer (User)</option>
                     <option value="admin">Administrator</option>
                   </select>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block mb-1">Account Verified</label>
+                  <label className="block mb-1">Verification Status</label>
                   <select
-                    value={formData.isVerified}
-                    onChange={(e) => setFormData({ ...formData, isVerified: e.target.value === "true" })}
-                    className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 bg-white outline-none cursor-pointer"
+                    value={userModal.data.isVerified ? "true" : "false"}
+                    onChange={(e) =>
+                      setUserModal({ ...userModal, data: { ...userModal.data, isVerified: e.target.value === "true" } })
+                    }
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none cursor-pointer"
                   >
                     <option value="true">Verified (Active)</option>
                     <option value="false">Unverified</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block mb-1">District / City</label>
-                  <input
-                    type="text"
-                    value={formData.district}
-                    onChange={(e) => setFormData({ ...formData, district: e.target.value })}
-                    className="w-full border border-slate-200 focus:border-indigo-600 rounded-xl px-3.5 py-2.5 outline-none bg-slate-50/50 focus:bg-white"
-                  />
-                </div>
               </div>
 
-              <div className="flex gap-2.5 pt-3">
-                <button
-                  type="submit"
-                  disabled={modalLoading}
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {modalLoading ? "Saving..." : editingUser ? "Save Changes" : "Create User"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition cursor-pointer"
-                >
-                  Cancel
-                </button>
+              <div>
+                <label className="block mb-1">
+                  {userModal.isEdit ? "Reset Password (Leave blank to keep unchanged)" : "Password *"}
+                </label>
+                <input
+                  type="password"
+                  required={!userModal.isEdit}
+                  placeholder={userModal.isEdit ? "New password..." : "Strong password"}
+                  value={userModal.isEdit ? userModal.data.newPassword || "" : userModal.data.password || ""}
+                  onChange={(e) =>
+                    userModal.isEdit
+                      ? setUserModal({ ...userModal, data: { ...userModal.data, newPassword: e.target.value } })
+                      : setUserModal({ ...userModal, data: { ...userModal.data, password: e.target.value } })
+                  }
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none focus:bg-white"
+                />
               </div>
-            </form>
-          </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setUserModal({ open: false, isEdit: false, data: {} })}
+                className="px-4 py-2 border rounded-xl text-xs font-bold text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                {userModal.isEdit ? "Update & Notify" : "Create User"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* MODAL 2: DIRECT CUSTOM BROADCAST (WHATSAPP + EMAIL EK SATH)              */}
+      {/* ========================================================================= */}
+      {broadcastModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <form
+            onSubmit={handleSendBroadcast}
+            className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-black text-sm text-slate-900 flex items-center gap-1.5">
+                  <Send className="w-4 h-4 text-emerald-600" />
+                  <span>Send Direct Notification</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Recipient: <b>{broadcastModal.user?.name}</b> ({broadcastModal.user?.email} | {broadcastModal.user?.mobile || "No Mobile"})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBroadcastModal({ open: false, user: null, subject: "", messageText: "" })}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Notification channels preview */}
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-bold">
+              <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center space-x-2">
+                <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>WhatsApp: {broadcastModal.user?.mobile ? "Active ✅" : "No Phone ❌"}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-800 border border-indigo-200 flex items-center space-x-2">
+                <Mail className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>Email: Active ✅</span>
+              </div>
+            </div>
+
+            <div className="text-xs space-y-3 font-bold text-slate-700">
+              <div>
+                <label className="block mb-1">Message Subject / Title</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Special Festive Discount for You / Account Update"
+                  value={broadcastModal.subject}
+                  onChange={(e) => setBroadcastModal({ ...broadcastModal, subject: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-none focus:bg-white focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1">Custom Message Body *</label>
+                <textarea
+                  rows={4}
+                  required
+                  placeholder="Type your message here. Yeh message user ko WhatsApp aur Email dono par ek sath dispatch hoga..."
+                  value={broadcastModal.messageText}
+                  onChange={(e) => setBroadcastModal({ ...broadcastModal, messageText: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none focus:bg-white focus:border-indigo-500 font-normal leading-relaxed resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setBroadcastModal({ open: false, user: null, subject: "", messageText: "" })}
+                className="px-4 py-2 border rounded-xl text-xs font-bold text-slate-600 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={sendingBroadcast}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{sendingBroadcast ? "Dispatching..." : "Send to WhatsApp & Email"}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

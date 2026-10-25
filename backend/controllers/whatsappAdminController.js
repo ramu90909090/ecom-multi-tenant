@@ -1,66 +1,61 @@
-const whatsappService = require("../services/whatsappService");
 const WhatsappLog = require("../models/WhatsappLog");
+const whatsappService = require("../services/whatsappService");
 const { processQueue } = require("../services/queueService");
 
-// 1. Get Live Session Status & Connected Info
+// 1. Get Session Status
 exports.getSessionStatus = (req, res) => {
-  return res.status(200).json({
-    success: true,
-    status: whatsappService.getClientStatus(),
-    qrCode: whatsappService.getQrCode(),
-    connectedNumber: whatsappService.getConnectedAdminNumber()
-  });
+  try {
+    res.status(200).json({
+      success: true,
+      status: whatsappService.getClientStatus(),
+      qrCode: whatsappService.getQrCode(),
+      connectedNumber: whatsappService.getConnectedAdminNumber()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
-// 2. Reconnect using saved session
+// 2. Reconnect Session
 exports.reconnectSession = async (req, res) => {
   try {
     await whatsappService.reconnectExistingSession();
-    return res.status(200).json({
-      success: true,
-      message: "Purane session se reconnect kiya ja raha hai..."
-    });
+    res.status(200).json({ success: true, message: "Reconnecting to existing session..." });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 3. Start Fresh Session & Delete All Old WhatsApp Logs
+// 3. Start Fresh Session
 exports.startNewSession = async (req, res) => {
   try {
     await whatsappService.resetAndStartNewSession();
-
-    // Naya session shuru hote hi purane saare queue logs clean karein
-    const deleteResult = await WhatsappLog.deleteMany({});
-    console.log(`🗑️ Cleared ${deleteResult.deletedCount} old WhatsApp logs for new session.`);
-
-    return res.status(200).json({
+    const deleteResult = await WhatsappLog.deleteMany({ tenant: req.tenant._id });
+    res.status(200).json({
       success: true,
-      message: "Purana session aur saare puraane logs delete ho gaye. Naya QR ban raha hai..."
+      message: `Fresh QR generation triggered. Cleared ${deleteResult.deletedCount} old logs.`
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 4. Disconnect / Logout
+// 4. Logout Session
 exports.logoutSession = async (req, res) => {
   try {
     await whatsappService.disconnectClient();
-    return res.status(200).json({
-      success: true,
-      message: "WhatsApp session successfully disconnect kar diya gaya."
-    });
+    res.status(200).json({ success: true, message: "WhatsApp disconnected." });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 5. Get Logs (Pagination, Filter, Search)
+// 5. Get Logs (Tenant Scoped + Supports TICKET IDs)
 exports.getWhatsappLogs = async (req, res) => {
   try {
+    const tenantId = req.tenant._id;
     const { search, status, triggerType, page = 1, limit = 10 } = req.query;
-    let query = {};
+    let query = { tenant: tenantId };
 
     if (search && search.trim()) {
       const regex = { $regex: search.trim(), $options: "i" };
@@ -70,21 +65,23 @@ exports.getWhatsappLogs = async (req, res) => {
     if (status && status !== "All") query.status = status;
     if (triggerType && triggerType !== "All") query.triggerType = triggerType;
 
-    const currentPage = Math.max(1, Number(page) || 1);
-    const perPage = Math.min(100, Math.max(1, Number(limit) || 10));
+    const currentPage = Number(page);
+    const perPage = Number(limit);
     const skip = (currentPage - 1) * perPage;
 
-    const [logs, total, sentCount, pendingCount, failedCount, notReachableCount] =
-      await Promise.all([
-        WhatsappLog.find(query).sort({ createdAt: -1 }).skip(skip).limit(perPage),
-        WhatsappLog.countDocuments(query),
-        WhatsappLog.countDocuments({ status: "Sent" }),
-        WhatsappLog.countDocuments({ status: "Pending" }),
-        WhatsappLog.countDocuments({ status: "Failed" }),
-        WhatsappLog.countDocuments({ status: "Not Reachable" })
-      ]);
+    const [logs, total] = await Promise.all([
+      WhatsappLog.find(query).sort({ createdAt: -1 }).skip(skip).limit(perPage),
+      WhatsappLog.countDocuments(query)
+    ]);
 
-    return res.status(200).json({
+    const [sentCount, pendingCount, failedCount, notReachableCount] = await Promise.all([
+      WhatsappLog.countDocuments({ tenant: tenantId, status: "Sent" }),
+      WhatsappLog.countDocuments({ tenant: tenantId, status: "Pending" }),
+      WhatsappLog.countDocuments({ tenant: tenantId, status: "Failed" }),
+      WhatsappLog.countDocuments({ tenant: tenantId, status: "Not Reachable" })
+    ]);
+
+    res.status(200).json({
       success: true,
       data: logs,
       pagination: {
@@ -101,14 +98,14 @@ exports.getWhatsappLogs = async (req, res) => {
       }
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 6. Retry single message
+// 6. Retry Failed / Pending WhatsApp Message (Orders & Support Tickets)
 exports.retryMessage = async (req, res) => {
   try {
-    const log = await WhatsappLog.findById(req.params.id);
+    const log = await WhatsappLog.findOne({ _id: req.params.id, tenant: req.tenant._id });
     if (!log) return res.status(404).json({ success: false, message: "Log nahi mila" });
 
     log.status = "Pending";
@@ -116,37 +113,25 @@ exports.retryMessage = async (req, res) => {
     log.errorReason = "";
     await log.save();
 
+    // Trigger queue runner immediately
     processQueue();
-    return res.status(200).json({
-      success: true,
-      message: "Message dobara queue me add ho gaya."
-    });
+    res.status(200).json({ success: true, message: "Message dobara queue me add ho gaya." });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 7. Bulk Delete Message Logs
+// 7. Bulk Delete Logs
 exports.bulkDeleteLogs = async (req, res) => {
   try {
-    const { logIds, deleteAll } = req.body;
-    let filter = {};
-
-    if (deleteAll) {
-      filter = {};
-    } else if (Array.isArray(logIds) && logIds.length > 0) {
-      filter = { _id: { $in: logIds } };
-    } else {
-      return res.status(400).json({ success: false, message: "Provide log IDs to delete." });
+    const { ids } = req.body;
+    if (!ids || !ids.length) {
+      return res.status(400).json({ success: false, message: "Koi log select nahi kiya." });
     }
 
-    const result = await WhatsappLog.deleteMany(filter);
-    return res.status(200).json({
-      success: true,
-      message: `${result.deletedCount} logs delete kar diye gaye!`,
-      deletedCount: result.deletedCount
-    });
+    await WhatsappLog.deleteMany({ _id: { $in: ids }, tenant: req.tenant._id });
+    res.status(200).json({ success: true, message: `${ids.length} logs delete kar diye gaye.` });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
