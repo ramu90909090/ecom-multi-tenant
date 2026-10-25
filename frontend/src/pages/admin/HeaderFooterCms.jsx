@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from "react";
 import {
   Save,
-  Upload,
-  Link as LinkIcon,
-  Plus,
-  Trash2,
-  Sparkles,
-  QrCode,
+  Mail,
+  Server,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Sparkles,
+  Send,
+  Loader2,
+  ShieldCheck
 } from "lucide-react";
 import API from "../../api/axios";
 import { useSettings } from "../../context/SettingsContext";
@@ -18,18 +18,38 @@ export default function HeaderFooterCms() {
   const { settings, fetchSettings } = useSettings();
   const [formData, setFormData] = useState(null);
 
-  // Available Tabs
-  const [activeTab, setActiveTab] = useState("navbar"); // "navbar" | "payment-qr" | "footer-brand" | "footer-trust" | "footer-info" | "footer-legal"
-
-  // Only Navbar Logo File Upload State
+  // Tabs
+  const [activeTab, setActiveTab] = useState("mail-server"); // Default to mailing partner for quick access
   const [navbarLogoFile, setNavbarLogoFile] = useState(null);
 
   const [isSaving, setIsSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState({ type: "", text: "" });
 
+  // Test Mail State
+  const [testEmailAddress, setTestEmailAddress] = useState("");
+  const [isTestingMail, setIsTestingMail] = useState(false);
+  const [mailTestMsg, setMailTestMsg] = useState({ type: "", text: "" });
+
   useEffect(() => {
     if (settings) {
-      setFormData(JSON.parse(JSON.stringify(settings)));
+      const cloned = JSON.parse(JSON.stringify(settings));
+      // Ensure mailConfig structure exists
+      if (!cloned.mailConfig) {
+        cloned.mailConfig = {
+          activeProvider: "mailcow",
+          gmail: { user: "", pass: "", fromName: cloned.navbar?.brandName || "Store Support" },
+          mailcow: {
+            host: "mail.uprcart.com",
+            port: 587,
+            secure: false,
+            user: "support@uprcart.com",
+            pass: "",
+            fromEmail: "support@uprcart.com",
+            fromName: "UPRCART Mailer"
+          }
+        };
+      }
+      setFormData(cloned);
     }
   }, [settings]);
 
@@ -42,7 +62,7 @@ export default function HeaderFooterCms() {
   }
 
   const handleSave = async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     setIsSaving(true);
     setStatusMsg({ type: "", text: "" });
 
@@ -50,7 +70,6 @@ export default function HeaderFooterCms() {
       const payload = new FormData();
       payload.append("settingsData", JSON.stringify(formData));
 
-      // Append logo file if selected
       if (navbarLogoFile) {
         payload.append("navbarLogo", navbarLogoFile);
       }
@@ -60,7 +79,7 @@ export default function HeaderFooterCms() {
       });
 
       if (res.data?.success) {
-        setStatusMsg({ type: "success", text: "Settings successfully updated and live on site!" });
+        setStatusMsg({ type: "success", text: "Settings successfully updated & live on server!" });
         setNavbarLogoFile(null);
         if (res.data.data) {
           setFormData(JSON.parse(JSON.stringify(res.data.data)));
@@ -77,24 +96,31 @@ export default function HeaderFooterCms() {
     }
   };
 
-  const handleAddQuickLink = () => {
-    setFormData((prev) => ({
-      ...prev,
-      footer: {
-        ...prev.footer,
-        quickLinks: [...(prev.footer?.quickLinks || []), { label: "New Link", url: "/" }]
-      }
-    }));
-  };
+  const handleTestMail = async () => {
+    if (!testEmailAddress.trim()) {
+      alert("Kripya test email recipient address dalein.");
+      return;
+    }
+    setIsTestingMail(true);
+    setMailTestMsg({ type: "", text: "" });
 
-  const handleRemoveQuickLink = (index) => {
-    setFormData((prev) => ({
-      ...prev,
-      footer: {
-        ...prev.footer,
-        quickLinks: prev.footer.quickLinks.filter((_, i) => i !== index)
+    try {
+      const res = await API.post("/settings/test-mail", {
+        config: formData.mailConfig,
+        targetEmail: testEmailAddress.trim()
+      });
+
+      if (res.data?.success) {
+        setMailTestMsg({ type: "success", text: res.data.message });
       }
-    }));
+    } catch (err) {
+      setMailTestMsg({
+        type: "error",
+        text: err.response?.data?.message || "SMTP Connection Failed"
+      });
+    } finally {
+      setIsTestingMail(false);
+    }
   };
 
   return (
@@ -102,9 +128,9 @@ export default function HeaderFooterCms() {
       {/* 1. Header with Save Action */}
       <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black text-gray-900">Header & Footer CMS Hub</h1>
+          <h1 className="text-2xl font-black text-gray-900">Store Settings & CMS Hub</h1>
           <p className="text-xs text-gray-500 mt-1">
-            Realtime branding, logo, descriptions, UPI details aur footer touchpoints ko manage karein.
+            Mailing Server (Gmail / Mailcow), Navbar branding, UPI payment aur Footer settings manage karein.
           </p>
         </div>
         <button
@@ -117,7 +143,7 @@ export default function HeaderFooterCms() {
         </button>
       </div>
 
-      {/* Status Feedback Notification */}
+      {/* Notification */}
       {statusMsg.text && (
         <div
           className={`p-4 rounded-2xl border text-xs font-bold flex items-center space-x-2 ${
@@ -138,12 +164,12 @@ export default function HeaderFooterCms() {
       {/* 2. Navigation Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
         {[
+          { id: "mail-server", label: "Mailing Partner (Gmail vs Mailcow)" },
           { id: "navbar", label: "Navbar Identity & Logo" },
           { id: "payment-qr", label: "Bank UPI Settings" },
           { id: "footer-brand", label: "Footer Brand & Description" },
           { id: "footer-trust", label: "Footer Trust Guarantees" },
-          { id: "footer-info", label: "Customer Desk & Socials" },
-          { id: "footer-legal", label: "Quick Links, Legal & Badges" }
+          { id: "footer-info", label: "Customer Desk & Socials" }
         ].map((tab) => (
           <button
             key={tab.id}
@@ -160,7 +186,306 @@ export default function HeaderFooterCms() {
       </div>
 
       {/* ======================================================== */}
-      {/* TAB 1: NAVBAR IDENTITY & LOGO                             */}
+      {/* TAB 1: DYNAMIC MAILING PARTNER (GMAIL VS MAILCOW)         */}
+      {/* ======================================================== */}
+      {activeTab === "mail-server" && (
+        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+          <div className="border-b pb-4">
+            <h2 className="text-base font-black text-gray-900 flex items-center space-x-2">
+              <Server className="w-5 h-5 text-indigo-600" />
+              <span>Select Active Mailing Partner</span>
+            </h2>
+            <p className="text-xs text-gray-400 mt-1">
+              Google ke email limits se bachne ke liye aap jab chahe Mailcow (mail.uprcart.com) ya Gmail switch kar sakte hain.
+            </p>
+          </div>
+
+          {/* Provider Selector Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Mailcow Card */}
+            <div
+              onClick={() =>
+                setFormData({
+                  ...formData,
+                  mailConfig: { ...formData.mailConfig, activeProvider: "mailcow" }
+                })
+              }
+              className={`p-5 rounded-3xl border-2 transition cursor-pointer relative ${
+                formData.mailConfig?.activeProvider === "mailcow"
+                  ? "border-indigo-600 bg-indigo-50/40 shadow-md ring-2 ring-indigo-500/20"
+                  : "border-gray-200 bg-gray-50/50 hover:bg-gray-100/60"
+              }`}
+            >
+              {formData.mailConfig?.activeProvider === "mailcow" && (
+                <span className="absolute top-4 right-4 bg-indigo-600 text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                  ACTIVE
+                </span>
+              )}
+              <div className="flex items-center space-x-3 mb-2">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center">
+                  <Server className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-gray-900">Mailcow Self-Hosted</h3>
+                  <p className="text-[11px] font-bold text-indigo-600">mail.uprcart.com (No Restrictions)</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Aapka khud ka private mailing server. Unlimited bulk emails, zero third-party blocking aur high delivery rate.
+              </p>
+            </div>
+
+            {/* Gmail Card */}
+            <div
+              onClick={() =>
+                setFormData({
+                  ...formData,
+                  mailConfig: { ...formData.mailConfig, activeProvider: "gmail" }
+                })
+              }
+              className={`p-5 rounded-3xl border-2 transition cursor-pointer relative ${
+                formData.mailConfig?.activeProvider === "gmail"
+                  ? "border-pink-600 bg-pink-50/40 shadow-md ring-2 ring-pink-500/20"
+                  : "border-gray-200 bg-gray-50/50 hover:bg-gray-100/60"
+              }`}
+            >
+              {formData.mailConfig?.activeProvider === "gmail" && (
+                <span className="absolute top-4 right-4 bg-pink-600 text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                  ACTIVE
+                </span>
+              )}
+              <div className="flex items-center space-x-3 mb-2">
+                <div className="w-10 h-10 rounded-2xl bg-pink-600 text-white flex items-center justify-center">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-gray-900">Google Gmail SMTP</h3>
+                  <p className="text-[11px] font-bold text-pink-600">smtp.gmail.com (500 mails/day)</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Google standard app password method. Small volume notifications ke liye accha hai.
+              </p>
+            </div>
+          </div>
+
+          {/* Form Fields: Mailcow Specific */}
+          {formData.mailConfig?.activeProvider === "mailcow" && (
+            <div className="p-6 rounded-3xl bg-indigo-50/40 border border-indigo-100 space-y-4">
+              <h3 className="text-xs font-black text-indigo-900 uppercase tracking-wider flex items-center space-x-1.5">
+                <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                <span>Mailcow Server Configuration (mail.uprcart.com)</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-bold">
+                <div>
+                  <label className="block text-gray-700 mb-1">Mailcow SMTP Host</label>
+                  <input
+                    type="text"
+                    value={formData.mailConfig.mailcow?.host || "mail.uprcart.com"}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          mailcow: { ...formData.mailConfig.mailcow, host: e.target.value }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 font-mono outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">Port (587 STARTTLS / 465 SSL)</label>
+                  <input
+                    type="number"
+                    value={formData.mailConfig.mailcow?.port || 587}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          mailcow: { ...formData.mailConfig.mailcow, port: Number(e.target.value) }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 font-mono outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">Sender Display Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. UPRCART Store"
+                    value={formData.mailConfig.mailcow?.fromName || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          mailcow: { ...formData.mailConfig.mailcow, fromName: e.target.value }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-1">
+                  <label className="block text-gray-700 mb-1">Mailbox Username / Email</label>
+                  <input
+                    type="email"
+                    placeholder="support@uprcart.com"
+                    value={formData.mailConfig.mailcow?.user || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          mailcow: {
+                            ...formData.mailConfig.mailcow,
+                            user: e.target.value,
+                            fromEmail: e.target.value
+                          }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 font-mono outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-gray-700 mb-1">Mailbox Password</label>
+                  <input
+                    type="password"
+                    placeholder="Mailcow Mailbox Password"
+                    value={formData.mailConfig.mailcow?.pass || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          mailcow: { ...formData.mailConfig.mailcow, pass: e.target.value }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 font-mono outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Form Fields: Gmail Specific */}
+          {formData.mailConfig?.activeProvider === "gmail" && (
+            <div className="p-6 rounded-3xl bg-pink-50/40 border border-pink-100 space-y-4">
+              <h3 className="text-xs font-black text-pink-900 uppercase tracking-wider flex items-center space-x-1.5">
+                <Mail className="w-4 h-4 text-pink-600" />
+                <span>Google Gmail SMTP Configuration</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-bold">
+                <div>
+                  <label className="block text-gray-700 mb-1">Gmail Address</label>
+                  <input
+                    type="email"
+                    placeholder="e.g. store@gmail.com"
+                    value={formData.mailConfig.gmail?.user || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          gmail: { ...formData.mailConfig.gmail, user: e.target.value }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 font-mono outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">Google App Password (16-char)</label>
+                  <input
+                    type="password"
+                    placeholder="xxxx xxxx xxxx xxxx"
+                    value={formData.mailConfig.gmail?.pass || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          gmail: { ...formData.mailConfig.gmail, pass: e.target.value }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 font-mono outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">Sender Display Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Store Support"
+                    value={formData.mailConfig.gmail?.fromName || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        mailConfig: {
+                          ...formData.mailConfig,
+                          gmail: { ...formData.mailConfig.gmail, fromName: e.target.value }
+                        }
+                      })
+                    }
+                    className="w-full bg-white border border-gray-200 rounded-xl p-2.5 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Test SMTP Connection Box */}
+          <div className="p-5 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
+            <h4 className="text-xs font-black text-gray-800 uppercase tracking-wider">
+              Verify & Send Live Test Email
+            </h4>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="email"
+                placeholder="Enter recipient email to verify (e.g. test@gmail.com)..."
+                value={testEmailAddress}
+                onChange={(e) => setTestEmailAddress(e.target.value)}
+                className="flex-1 bg-white border border-gray-200 rounded-xl p-2.5 text-xs outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleTestMail}
+                disabled={isTestingMail}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-50 shrink-0"
+              >
+                {isTestingMail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <span>{isTestingMail ? "Verifying..." : "Send Test Mail"}</span>
+              </button>
+            </div>
+
+            {mailTestMsg.text && (
+              <p
+                className={`text-xs font-bold mt-1 ${
+                  mailTestMsg.type === "success" ? "text-emerald-600" : "text-rose-600"
+                }`}
+              >
+                {mailTestMsg.text}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* TAB 2: NAVBAR IDENTITY & LOGO                             */}
       {/* ======================================================== */}
       {activeTab === "navbar" && (
         <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
@@ -250,22 +575,11 @@ export default function HeaderFooterCms() {
       )}
 
       {/* ======================================================== */}
-      {/* TAB 2: BANK UPI SETTINGS (QR Upload Removed)             */}
+      {/* TAB 3: BANK UPI SETTINGS                                 */}
       {/* ======================================================== */}
       {activeTab === "payment-qr" && (
         <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-          <div className="flex items-center justify-between border-b pb-3">
-            <div>
-              <h2 className="text-base font-black text-gray-900 flex items-center space-x-2">
-                <QrCode className="w-5 h-5 text-pink-600" />
-                <span>Bank Account UPI Details</span>
-              </h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Bank change hone par yahan se apna naya UPI ID aur Receiver Name update karein. System automatic QR generate karega.
-              </p>
-            </div>
-          </div>
-
+          <h2 className="text-base font-black text-gray-900 border-b pb-3">Bank Account UPI Details</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-bold">
             <div>
               <label className="block text-gray-700 mb-1">Receiver UPI ID / VPA *</label>
@@ -279,10 +593,9 @@ export default function HeaderFooterCms() {
                     paymentGateway: { ...formData.paymentGateway, upiId: e.target.value }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none focus:border-pink-500 font-mono"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none font-mono"
               />
             </div>
-
             <div>
               <label className="block text-gray-700 mb-1">Merchant / Account Holder Name *</label>
               <input
@@ -295,10 +608,9 @@ export default function HeaderFooterCms() {
                     paymentGateway: { ...formData.paymentGateway, merchantName: e.target.value }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none focus:border-pink-500"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none"
               />
             </div>
-
             <div>
               <label className="block text-gray-700 mb-1">Cash on Delivery (COD) Minimum Amount (₹)</label>
               <input
@@ -311,23 +623,7 @@ export default function HeaderFooterCms() {
                     paymentGateway: { ...formData.paymentGateway, codMinAmount: Number(e.target.value) }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none focus:border-pink-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-gray-700 mb-1">Payment Verification Warning Note</label>
-              <input
-                type="text"
-                placeholder="Alert note for users before scanning..."
-                value={formData.paymentGateway?.verificationNote || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    paymentGateway: { ...formData.paymentGateway, verificationNote: e.target.value }
-                  })
-                }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none focus:border-pink-500 font-normal"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none"
               />
             </div>
           </div>
@@ -335,18 +631,16 @@ export default function HeaderFooterCms() {
       )}
 
       {/* ======================================================== */}
-      {/* TAB 3: FOOTER BRAND & DESCRIPTION (Logo Upload Removed) */}
+      {/* TAB 4: FOOTER BRAND & DESCRIPTION                        */}
       {/* ======================================================== */}
       {activeTab === "footer-brand" && (
         <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <h2 className="text-base font-black text-gray-900 border-b pb-3">Footer Brand & Description</h2>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-bold">
             <div>
               <label className="block text-gray-700 mb-1">Footer Brand Name</label>
               <input
                 type="text"
-                placeholder="e.g. KHASTORE"
                 value={formData.footer?.brandName || ""}
                 onChange={(e) =>
                   setFormData({
@@ -354,15 +648,13 @@ export default function HeaderFooterCms() {
                     footer: { ...formData.footer, brandName: e.target.value }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:bg-white focus:border-pink-500 outline-none"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none"
               />
             </div>
-
             <div>
               <label className="block text-gray-700 mb-1">Footer Subtitle Tagline</label>
               <input
                 type="text"
-                placeholder="e.g. Premium Deals 2026"
                 value={formData.footer?.brandSubtitle || ""}
                 onChange={(e) =>
                   setFormData({
@@ -370,16 +662,14 @@ export default function HeaderFooterCms() {
                     footer: { ...formData.footer, brandSubtitle: e.target.value }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:bg-white focus:border-pink-500 outline-none"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none"
               />
             </div>
           </div>
-
           <div>
-            <label className="block text-xs font-bold text-gray-700 mb-1">Footer Main Description Paragraph</label>
+            <label className="block text-xs font-bold text-gray-700 mb-1">Footer Main Description</label>
             <textarea
               rows={4}
-              placeholder="e.g. Direct factory pricing aur authentic lifestyle & electronic gadgets..."
               value={formData.footer?.description || ""}
               onChange={(e) =>
                 setFormData({
@@ -387,66 +677,42 @@ export default function HeaderFooterCms() {
                   footer: { ...formData.footer, description: e.target.value }
                 })
               }
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 focus:bg-white focus:border-pink-500 outline-none text-xs leading-relaxed"
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 outline-none text-xs"
             />
           </div>
         </div>
       )}
 
       {/* ======================================================== */}
-      {/* TAB 4: FOOTER TRUST GUARANTEES (As-it-is)                */}
+      {/* TAB 5: FOOTER TRUST GUARANTEES                           */}
       {/* ======================================================== */}
       {activeTab === "footer-trust" && (
         <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-          <h2 className="text-base font-black text-gray-900 border-b pb-3">Trust Badges (Top 4 Boxes Strip)</h2>
-
+          <h2 className="text-base font-black text-gray-900 border-b pb-3">Trust Badges</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {(formData.footer?.trustGuarantees || []).map((item, idx) => (
-              <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3 text-xs">
-                <span className="font-black text-pink-600 uppercase text-[10px]">Badge #{idx + 1}</span>
-                <div>
-                  <label className="block text-gray-600 font-bold mb-1">Headline</label>
-                  <input
-                    type="text"
-                    value={item.title}
-                    onChange={(e) => {
-                      const updated = [...formData.footer.trustGuarantees];
-                      updated[idx].title = e.target.value;
-                      setFormData({ ...formData, footer: { ...formData.footer, trustGuarantees: updated } });
-                    }}
-                    className="w-full bg-white border border-gray-200 rounded-xl p-2 font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 font-bold mb-1">Subtext</label>
-                  <input
-                    type="text"
-                    value={item.subtitle}
-                    onChange={(e) => {
-                      const updated = [...formData.footer.trustGuarantees];
-                      updated[idx].subtitle = e.target.value;
-                      setFormData({ ...formData, footer: { ...formData.footer, trustGuarantees: updated } });
-                    }}
-                    className="w-full bg-white border border-gray-200 rounded-xl p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-600 font-bold mb-1">Icon Shape</label>
-                  <select
-                    value={item.iconKey}
-                    onChange={(e) => {
-                      const updated = [...formData.footer.trustGuarantees];
-                      updated[idx].iconKey = e.target.value;
-                      setFormData({ ...formData, footer: { ...formData.footer, trustGuarantees: updated } });
-                    }}
-                    className="w-full bg-white border border-gray-200 rounded-xl p-2 font-bold cursor-pointer"
-                  >
-                    <option value="truck">Delivery Truck (Truck)</option>
-                    <option value="shield">Warranty Shield (ShieldCheck)</option>
-                    <option value="rotate">Return Policy (RotateCcw)</option>
-                    <option value="headphones">Support Agent (Headphones)</option>
-                  </select>
-                </div>
+              <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-2 text-xs">
+                <span className="font-black text-pink-600 text-[10px]">Badge #{idx + 1}</span>
+                <input
+                  type="text"
+                  value={item.title}
+                  onChange={(e) => {
+                    const updated = [...formData.footer.trustGuarantees];
+                    updated[idx].title = e.target.value;
+                    setFormData({ ...formData, footer: { ...formData.footer, trustGuarantees: updated } });
+                  }}
+                  className="w-full bg-white border border-gray-200 rounded-xl p-2 font-bold"
+                />
+                <input
+                  type="text"
+                  value={item.subtitle}
+                  onChange={(e) => {
+                    const updated = [...formData.footer.trustGuarantees];
+                    updated[idx].subtitle = e.target.value;
+                    setFormData({ ...formData, footer: { ...formData.footer, trustGuarantees: updated } });
+                  }}
+                  className="w-full bg-white border border-gray-200 rounded-xl p-2"
+                />
               </div>
             ))}
           </div>
@@ -454,12 +720,10 @@ export default function HeaderFooterCms() {
       )}
 
       {/* ======================================================== */}
-      {/* TAB 5: CUSTOMER DESK & SOCIAL PROFILES (As-it-is)       */}
-      {/* ======================================================== */}
+      {/* TAB 6: CUSTOMER DESK & SOCIALS                           */}
       {activeTab === "footer-info" && (
         <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <h2 className="text-base font-black text-gray-900 border-b pb-3">Support Contacts & Social Profiles</h2>
-
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-bold">
             <div>
               <label className="block text-gray-700 mb-1">Office Address</label>
@@ -475,7 +739,7 @@ export default function HeaderFooterCms() {
                     }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 outline-none focus:border-pink-500"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 outline-none"
               />
             </div>
             <div>
@@ -492,7 +756,7 @@ export default function HeaderFooterCms() {
                     }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 outline-none focus:border-pink-500"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 outline-none"
               />
             </div>
             <div>
@@ -509,149 +773,7 @@ export default function HeaderFooterCms() {
                     }
                   })
                 }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 outline-none focus:border-pink-500"
-              />
-            </div>
-          </div>
-
-          <h3 className="text-xs font-black uppercase text-gray-700 pt-3">Social Media URLs</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-            <div>
-              <label className="block text-gray-500 font-bold mb-1">Instagram Link</label>
-              <input
-                type="url"
-                value={formData.footer?.socialLinks?.instagram || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    footer: {
-                      ...formData.footer,
-                      socialLinks: { ...formData.footer.socialLinks, instagram: e.target.value }
-                    }
-                  })
-                }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-500 font-bold mb-1">Twitter / X Link</label>
-              <input
-                type="url"
-                value={formData.footer?.socialLinks?.twitter || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    footer: {
-                      ...formData.footer,
-                      socialLinks: { ...formData.footer.socialLinks, twitter: e.target.value }
-                    }
-                  })
-                }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-500 font-bold mb-1">YouTube Link</label>
-              <input
-                type="url"
-                value={formData.footer?.socialLinks?.youtube || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    footer: {
-                      ...formData.footer,
-                      socialLinks: { ...formData.footer.socialLinks, youtube: e.target.value }
-                    }
-                  })
-                }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* TAB 6: QUICK LINKS, LEGAL & BADGES (As-it-is)            */}
-      {/* ======================================================== */}
-      {activeTab === "footer-legal" && (
-        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-          <div className="flex items-center justify-between border-b pb-3">
-            <h2 className="text-base font-black text-gray-900">Footer Navigation Links</h2>
-            <button
-              onClick={handleAddQuickLink}
-              type="button"
-              className="inline-flex items-center space-x-1 text-xs font-bold text-pink-600 hover:text-pink-700 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Custom Link</span>
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {(formData.footer?.quickLinks || []).map((link, idx) => (
-              <div key={idx} className="flex items-center gap-3">
-                <input
-                  type="text"
-                  placeholder="Link Title (e.g. Terms)"
-                  value={link.label}
-                  onChange={(e) => {
-                    const updated = [...formData.footer.quickLinks];
-                    updated[idx].label = e.target.value;
-                    setFormData({ ...formData, footer: { ...formData.footer, quickLinks: updated } });
-                  }}
-                  className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs font-bold"
-                />
-                <input
-                  type="text"
-                  placeholder="Path URL (e.g. /terms)"
-                  value={link.url}
-                  onChange={(e) => {
-                    const updated = [...formData.footer.quickLinks];
-                    updated[idx].url = e.target.value;
-                    setFormData({ ...formData, footer: { ...formData.footer, quickLinks: updated } });
-                  }}
-                  className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleRemoveQuickLink(idx)}
-                  className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <h3 className="text-xs font-black uppercase text-gray-700 pt-3 border-t">Copyright & Heart Notice</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-bold">
-            <div>
-              <label className="block text-gray-600 mb-1">Copyright Text</label>
-              <input
-                type="text"
-                value={formData.footer?.copyrightText || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    footer: { ...formData.footer, copyrightText: e.target.value }
-                  })
-                }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-600 mb-1">Crafted With Heart Text</label>
-              <input
-                type="text"
-                value={formData.footer?.heartNotice || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    footer: { ...formData.footer, heartNotice: e.target.value }
-                  })
-                }
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-2.5 outline-none"
               />
             </div>
           </div>

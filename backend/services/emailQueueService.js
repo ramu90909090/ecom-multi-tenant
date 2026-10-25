@@ -1,92 +1,73 @@
-const nodemailer = require("nodemailer");
-const EmailLog = require("../models/EmailLog");
+const EmailQueue = require("../models/EmailQueue");
+const { sendMail } = require("./mailService");
 
-let isProcessingEmailQueue = false;
+let isProcessing = false;
 
-// 1. Nodemailer Transporter Setup
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER || "your-email@gmail.com",
-    pass: process.env.EMAIL_PASS || "your-app-password"
-  }
-});
-
-// 2. Add Email into Database Queue
-const queueEmail = async ({
-  tenantId,
-  to,
-  subject,
-  htmlBody,
-  triggerType = "general",
-  referenceId = ""
-}) => {
+const queueEmail = async ({ tenantId, to, subject, htmlBody, triggerType, referenceId }) => {
   try {
-    if (!to || !to.includes("@")) return null;
-
-    const emailItem = await EmailLog.create({
-      tenant: tenantId,
-      to,
+    const queueItem = await EmailQueue.create({
+      tenant: tenantId || null,
+      recipientEmail: to,
       subject,
       htmlBody,
-      triggerType,
-      referenceId,
-      status: "Pending"
+      triggerType: triggerType || "general",
+      referenceId: referenceId || "",
+      status: "pending"
     });
 
-    // Asynchronously trigger processing
-    processEmailQueue();
-    return emailItem;
-  } catch (err) {
-    console.error("Email queue insertion error:", err);
+    // Background processor kick off
+    setImmediate(() => {
+      processEmailQueue();
+    });
+
+    return queueItem;
+  } catch (error) {
+    console.error("queueEmail Error:", error.message);
+    throw error;
   }
 };
 
-// 3. FIFO Queue Runner with Retry Mechanism
 const processEmailQueue = async () => {
-  if (isProcessingEmailQueue) return;
-  isProcessingEmailQueue = true;
+  if (isProcessing) return;
+  isProcessing = true;
 
   try {
-    const pendingEmail = await EmailLog.findOne({
-      status: { $in: ["Pending", "Failed"] },
-      retries: { $lt: 3 }
-    }).sort({ createdAt: 1 });
+    const pendingItems = await EmailQueue.find({
+      status: { $in: ["pending", "failed"] },
+      attempts: { $lt: 4 }
+    })
+      .sort({ createdAt: 1 })
+      .limit(10);
 
-    if (!pendingEmail) {
-      isProcessingEmailQueue = false;
-      return;
+    for (const item of pendingItems) {
+      try {
+        item.status = "processing";
+        item.attempts += 1;
+        await item.save();
+
+        const result = await sendMail({
+          tenantId: item.tenant,
+          to: item.recipientEmail,
+          subject: item.subject,
+          htmlBody: item.htmlBody
+        });
+
+        item.status = "sent";
+        item.sentAt = new Date();
+        item.lastError = "";
+        await item.save();
+        console.log(`📧 Email sent to ${item.recipientEmail} via [${result.provider}]`);
+      } catch (err) {
+        item.status = item.attempts >= 4 ? "failed_permanently" : "failed";
+        item.lastError = err.message;
+        await item.save();
+        console.warn(`⚠️ Email send failed to ${item.recipientEmail}: ${err.message}`);
+      }
     }
-
-    try {
-      await transporter.sendMail({
-        from: `"${process.env.APP_NAME || "Store Support"}" <${process.env.EMAIL_USER}>`,
-        to: pendingEmail.to,
-        subject: pendingEmail.subject,
-        html: pendingEmail.htmlBody
-      });
-
-      pendingEmail.status = "Sent";
-      pendingEmail.sentAt = new Date();
-      pendingEmail.errorReason = "";
-      await pendingEmail.save();
-      console.log(`📧 [Email Queue] Sent to ${pendingEmail.to} (${pendingEmail.triggerType})`);
-    } catch (err) {
-      pendingEmail.retries += 1;
-      pendingEmail.errorReason = err.message || "Failed to deliver email";
-      pendingEmail.status = pendingEmail.retries >= pendingEmail.maxRetries ? "Failed" : "Failed";
-      await pendingEmail.save();
-      console.warn(`⚠️ [Email Queue] Retry ${pendingEmail.retries}/3 for ${pendingEmail.to}`);
-    }
-
-    // 1.5-second gap to prevent SMTP rate-limiting
-    setTimeout(() => {
-      isProcessingEmailQueue = false;
-      processEmailQueue();
-    }, 1500);
-  } catch (globalErr) {
-    console.error("Email Queue Processor Error:", globalErr);
-    isProcessingEmailQueue = false;
+  } catch (error) {
+    console.error("processEmailQueue Error:", error.message);
+  } finally {
+    isProcessing = false;
   }
 };
 

@@ -1,33 +1,39 @@
 const mongoose = require("mongoose");
 
-const trustGuaranteeSchema = new mongoose.Schema({
-  title: { type: String, default: "" },
-  subtitle: { type: String, default: "" },
-  iconKey: { type: String, default: "truck" } // truck, shield, rotate, headphones
-});
+// Sub-schema for Trust Guarantees
+const trustGuaranteeSchema = new mongoose.Schema(
+  {
+    title: { type: String, default: "" },
+    subtitle: { type: String, default: "" },
+    iconKey: { type: String, default: "truck" }
+  },
+  { _id: false }
+);
 
-const quickLinkSchema = new mongoose.Schema({
-  label: { type: String, required: true },
-  url: { type: String, required: true }
-});
+// Sub-schema for Quick Links
+const quickLinkSchema = new mongoose.Schema(
+  {
+    label: { type: String, default: "" },
+    url: { type: String, default: "/" }
+  },
+  { _id: false }
+);
 
 const siteSettingsSchema = new mongoose.Schema(
   {
     tenant: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Tenant",
-      required: true,
       index: true
     },
     navbar: {
-      brandName: { type: String, default: "STORE" },
-      brandSubtitle: { type: String, default: "Verified Deals" },
+      brandName: { type: String, default: "KHASTORE" },
+      brandSubtitle: { type: String, default: "Premium Deals" },
       logoUrl: { type: String, default: "" }
     },
     paymentGateway: {
       upiId: { type: String, default: "juhip2019@okaxis" },
       merchantName: { type: String, default: "Juhi Pafhj" },
-      qrImageUrl: { type: String, default: "" },
       codMinAmount: { type: Number, default: 5000 },
       verificationNote: {
         type: String,
@@ -35,15 +41,37 @@ const siteSettingsSchema = new mongoose.Schema(
           "Payment karte waqt verify karein ki receiver UPI ID aur name account se match ho raha ho."
       }
     },
+    // 🔥 Dynamic Mailing Server Config (Gmail vs Mailcow)
+    mailConfig: {
+      activeProvider: {
+        type: String,
+        enum: ["gmail", "mailcow"],
+        default: process.env.DEFAULT_MAIL_PROVIDER || "mailcow"
+      },
+      gmail: {
+        user: { type: String, default: process.env.EMAIL_USER || "" },
+        pass: { type: String, default: process.env.EMAIL_PASS || "" },
+        fromName: { type: String, default: "Store Support" }
+      },
+      mailcow: {
+        host: { type: String, default: process.env.MAILCOW_HOST || "mail.uprcart.com" },
+        port: { type: Number, default: Number(process.env.MAILCOW_PORT) || 587 },
+        secure: { type: Boolean, default: false },
+        user: { type: String, default: process.env.MAILCOW_USER || "support@uprcart.com" },
+        pass: { type: String, default: process.env.MAILCOW_PASS || "" },
+        fromEmail: { type: String, default: process.env.MAILCOW_USER || "support@uprcart.com" },
+        fromName: { type: String, default: "UPRCART Mailer" }
+      }
+    },
     footer: {
-      brandName: { type: String, default: "STORE" },
+      brandName: { type: String, default: "KHASTORE" },
       brandSubtitle: { type: String, default: "Premium Deals 2026" },
       description: {
         type: String,
         default:
           "Direct factory pricing aur authentic lifestyle & electronic gadgets express pan-India delivery ke sath."
       },
-      logoUrl: { type: String, default: "" },
+      // ✅ Correct Schema definition with proper defaults
       trustGuarantees: {
         type: [trustGuaranteeSchema],
         default: [
@@ -59,21 +87,21 @@ const siteSettingsSchema = new mongoose.Schema(
         email: { type: String, default: "support@khastore.com" }
       },
       socialLinks: {
-        instagram: { type: String, default: "" },
-        twitter: { type: String, default: "" },
-        youtube: { type: String, default: "" }
+        instagram: { type: String, default: "https://instagram.com" },
+        twitter: { type: String, default: "https://twitter.com" },
+        youtube: { type: String, default: "https://youtube.com" }
       },
       quickLinks: {
         type: [quickLinkSchema],
         default: [
           { label: "Home", url: "/" },
-          { label: "Products", url: "/products" },
+          { label: "All Products", url: "/products" },
           { label: "About Us", url: "/about" },
-          { label: "Contact Desk", url: "/contact" }
+          { label: "Contact Us", url: "/contact" }
         ]
       },
-      copyrightText: { type: String, default: "© 2026 All Rights Reserved." },
-      heartNotice: { type: String, default: "Crafted with quality for pan-India buyers." }
+      copyrightText: { type: String, default: "© 2026 KHASTORE. All rights reserved." },
+      heartNotice: { type: String, default: "Crafted with passion for authentic products." }
     }
   },
   { timestamps: true }

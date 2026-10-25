@@ -1,4 +1,5 @@
 const SiteSettings = require("../models/SiteSettings");
+const { testConnection, sendMail } = require("../services/mailService");
 
 // Helper: Seed initial config if not exists
 const getOrCreateSettings = async (tenantId) => {
@@ -16,39 +17,29 @@ const getOrCreateSettings = async (tenantId) => {
         upiId: "juhip2019@okaxis",
         merchantName: "Juhi Pafhj",
         codMinAmount: 5000,
-        verificationNote:
-          "Payment karte waqt verify karein ki receiver UPI ID aur name account se match ho raha ho."
+        verificationNote: "Payment karte waqt verify karein ki receiver UPI ID aur name account se match ho raha ho."
+      },
+      mailConfig: {
+        activeProvider: process.env.DEFAULT_MAIL_PROVIDER || "mailcow",
+        gmail: {
+          user: process.env.EMAIL_USER || "",
+          pass: process.env.EMAIL_PASS || "",
+          fromName: "KHASTORE Support"
+        },
+        mailcow: {
+          host: process.env.MAILCOW_HOST || "mail.uprcart.com",
+          port: Number(process.env.MAILCOW_PORT) || 587,
+          secure: false,
+          user: process.env.MAILCOW_USER || "support@uprcart.com",
+          pass: process.env.MAILCOW_PASS || "",
+          fromEmail: process.env.MAILCOW_USER || "support@uprcart.com",
+          fromName: "UPRCART Mailer"
+        }
       },
       footer: {
         brandName: "KHASTORE",
         brandSubtitle: "Premium Deals 2026",
-        description:
-          "Direct factory pricing aur authentic lifestyle & electronic gadgets express pan-India delivery ke sath.",
-        logoUrl: "",
-        trustGuarantees: [
-          { title: "Pan-India Shipping", subtitle: "2-4 Business Days Express Delivery", iconKey: "truck" },
-          { title: "100% Genuine Brands", subtitle: "Certified Factory Sealed Units", iconKey: "shield" },
-          { title: "7 Days Easy Returns", subtitle: "Doorstep Pickup & Instant UPI Refund", iconKey: "rotate" },
-          { title: "24/7 Priority Support", subtitle: "Live WhatsApp & Ticket Desk", iconKey: "headphones" }
-        ],
-        customerDesk: {
-          address: "Hazratganj, Lucknow, UP - 226001",
-          phone: "+91 81879 21060",
-          email: "support@khastore.com"
-        },
-        socialLinks: {
-          instagram: "https://instagram.com",
-          twitter: "https://twitter.com",
-          youtube: "https://youtube.com"
-        },
-        quickLinks: [
-          { label: "Home", url: "/" },
-          { label: "All Products", url: "/products" },
-          { label: "About Us", url: "/about" },
-          { label: "Contact Us", url: "/contact" }
-        ],
-        copyrightText: "© 2026 KHASTORE. All rights reserved.",
-        heartNotice: "Crafted with passion for authentic products."
+        description: "Direct factory pricing aur authentic lifestyle & electronic gadgets express pan-India delivery ke sath."
       }
     };
 
@@ -58,7 +49,7 @@ const getOrCreateSettings = async (tenantId) => {
   return settings;
 };
 
-// 1. GET Settings (Public & Tenant-Scoped)
+// 1. GET Settings
 exports.getSettings = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
@@ -69,7 +60,7 @@ exports.getSettings = async (req, res) => {
   }
 };
 
-// 2. UPDATE Settings (Navbar Logo File Upload + Clean Form Data)
+// 2. UPDATE Settings
 exports.updateSettings = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
@@ -86,7 +77,7 @@ exports.updateSettings = async (req, res) => {
       parsedData = req.body;
     }
 
-    // 1. Merge Navbar Settings
+    // 1. Navbar
     if (parsedData.navbar) {
       settings.navbar.brandName = parsedData.navbar.brandName ?? settings.navbar.brandName;
       settings.navbar.brandSubtitle = parsedData.navbar.brandSubtitle ?? settings.navbar.brandSubtitle;
@@ -95,14 +86,12 @@ exports.updateSettings = async (req, res) => {
       }
     }
 
-    // Handle Navbar Logo File Upload (Higher Priority over text URL)
+    // Logo Upload
     if (req.files && req.files.navbarLogo && req.files.navbarLogo[0]) {
-      const uploadedFile = req.files.navbarLogo[0];
-      // Path format check (uploads folder se match)
-      settings.navbar.logoUrl = `/uploads/${uploadedFile.filename}`;
+      settings.navbar.logoUrl = `/uploads/${req.files.navbarLogo[0].filename}`;
     }
 
-    // 2. Merge Payment Gateway (QR image upload removed)
+    // 2. Payment Gateway
     if (parsedData.paymentGateway) {
       settings.paymentGateway.upiId = parsedData.paymentGateway.upiId ?? settings.paymentGateway.upiId;
       settings.paymentGateway.merchantName = parsedData.paymentGateway.merchantName ?? settings.paymentGateway.merchantName;
@@ -110,12 +99,19 @@ exports.updateSettings = async (req, res) => {
       settings.paymentGateway.verificationNote = parsedData.paymentGateway.verificationNote ?? settings.paymentGateway.verificationNote;
     }
 
-    // 3. Merge Footer Settings (Footer logo file upload removed, text & details retained)
+    // 3. 🔥 Mail Server Config (Gmail / Mailcow)
+    if (parsedData.mailConfig) {
+      settings.mailConfig = {
+        ...settings.mailConfig,
+        ...parsedData.mailConfig
+      };
+    }
+
+    // 4. Footer
     if (parsedData.footer) {
       settings.footer.brandName = parsedData.footer.brandName ?? settings.footer.brandName;
       settings.footer.brandSubtitle = parsedData.footer.brandSubtitle ?? settings.footer.brandSubtitle;
       settings.footer.description = parsedData.footer.description ?? settings.footer.description;
-
       if (Array.isArray(parsedData.footer.trustGuarantees)) {
         settings.footer.trustGuarantees = parsedData.footer.trustGuarantees;
       }
@@ -140,5 +136,45 @@ exports.updateSettings = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// 3. TEST SMTP MAIL CONFIGURATION (Live Check & Test Mail)
+exports.testMailConfig = async (req, res) => {
+  try {
+    const { config, targetEmail } = req.body;
+    if (!config) {
+      return res.status(400).json({ success: false, message: "Configuration missing." });
+    }
+
+    // 1. Verify Credentials with SMTP Handshake
+    await testConnection(config);
+
+    // 2. If targetEmail is provided, send real test email
+    if (targetEmail) {
+      await sendMail({
+        tenantId: req.tenant?._id,
+        to: targetEmail,
+        subject: `🧪 Test Email from ${config.activeProvider.toUpperCase()} (${config.mailcow?.host || "Gmail"})`,
+        htmlBody: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+            <h2 style="color: #4f46e5;">Mailing Server Verified! 🎉</h2>
+            <p>Aapka mailing provider <b>${config.activeProvider.toUpperCase()}</b> safaltapoorvak connect ho gaya hai.</p>
+            <p><b>Server:</b> ${config.activeProvider === "mailcow" ? config.mailcow.host : "smtp.gmail.com"}</p>
+            <p><b>Timestamp:</b> ${new Date().toLocaleString()}</p>
+          </div>
+        `
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Connection successful! ${targetEmail ? `Test mail sent to ${targetEmail}` : ""}`
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: `SMTP Verification Failed: ${error.message}`
+    });
   }
 };

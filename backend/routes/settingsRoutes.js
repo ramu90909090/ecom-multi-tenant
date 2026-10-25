@@ -10,16 +10,23 @@ const settingsController = require("../controllers/settingsController");
 // Public Get Settings
 router.get("/", tenantMiddleware, settingsController.getSettings);
 
-// Admin Protected Update - Sirf navbarLogo file upload allowed hai
+// Admin Protected Update
 router.put(
   "/",
   tenantMiddleware,
   authMiddleware,
   roleMiddleware("admin"),
-  upload.fields([
-    { name: "navbarLogo", maxCount: 1 }
-  ]),
+  upload.fields([{ name: "navbarLogo", maxCount: 1 }]),
   settingsController.updateSettings
+);
+
+// Admin Protected Test SMTP Connection
+router.post(
+  "/test-mail",
+  tenantMiddleware,
+  authMiddleware,
+  roleMiddleware("admin"),
+  settingsController.testMailConfig
 );
 
 module.exports = router;
