@@ -13,7 +13,7 @@ export const CartProvider = ({ children }) => {
     }
   });
 
-  // 2. Direct Buy Now Item with LocalStorage Persistence
+  // 2. Direct Buy Now Item Persistence
   const [checkoutItem, setCheckoutItemState] = useState(() => {
     try {
       const savedCheckout = localStorage.getItem("direct_checkout_item");
@@ -23,7 +23,7 @@ export const CartProvider = ({ children }) => {
     }
   });
 
-  // Sync Cart to LocalStorage
+  // LocalStorage Sync
   useEffect(() => {
     try {
       localStorage.setItem("store_cart", JSON.stringify(cart));
@@ -32,7 +32,6 @@ export const CartProvider = ({ children }) => {
     }
   }, [cart]);
 
-  // Robust setCheckoutItem wrapper
   const setCheckoutItem = (item) => {
     setCheckoutItemState(item);
     try {
@@ -46,24 +45,64 @@ export const CartProvider = ({ children }) => {
     }
   };
 
-  // Add To Cart Function
-  const addToCart = (product) => {
+  // Helper: Matching ID resolver (_id or id)
+  const isMatchingId = (item, targetId) => {
+    const itemId = String(item._id || item.id || "");
+    const searchId = String(targetId || "");
+    return itemId === searchId;
+  };
+
+  // Add To Cart
+  const addToCart = (product, addQty = 1) => {
+    const qtyToAdd = Number(addQty) > 0 ? Number(addQty) : 1;
     setCart((prevCart) => {
-      const existing = prevCart.find(
-        (it) => (it._id || it.id) === (product._id || product.id)
+      const existing = prevCart.find((it) =>
+        isMatchingId(it, product._id || product.id)
       );
+
       if (existing) {
         return prevCart.map((it) =>
-          (it._id || it.id) === (product._id || product.id)
-            ? { ...it, quantity: (it.quantity || 1) + (product.quantity || 1) }
+          isMatchingId(it, product._id || product.id)
+            ? { ...it, quantity: (Number(it.quantity) || 1) + qtyToAdd }
             : it
         );
       }
-      return [...prevCart, { ...product, quantity: product.quantity || 1 }];
+
+      return [
+        ...prevCart,
+        {
+          ...product,
+          _id: product._id || product.id,
+          id: product._id || product.id,
+          quantity: qtyToAdd
+        }
+      ];
     });
   };
 
-  // Clear Cart & Direct Buy
+  // Update Quantity (+1 or -1)
+  const updateQuantity = (id, delta) => {
+    setCart((prevCart) =>
+      prevCart
+        .map((item) => {
+          if (isMatchingId(item, id)) {
+            const currentQty = Number(item.quantity) || 1;
+            const newQty = currentQty + delta;
+            // Agar quantity 0 ho jaye to filter out karein
+            return newQty > 0 ? { ...item, quantity: newQty } : null;
+          }
+          return item;
+        })
+        .filter(Boolean)
+    );
+  };
+
+  // Remove Item from Cart
+  const removeFromCart = (id) => {
+    setCart((prevCart) => prevCart.filter((item) => !isMatchingId(item, id)));
+  };
+
+  // Clear Cart
   const clearCart = () => {
     setCart([]);
     setCheckoutItem(null);
@@ -78,9 +117,11 @@ export const CartProvider = ({ children }) => {
       value={{
         cart,
         addToCart,
+        updateQuantity,
+        removeFromCart,
+        clearCart,
         checkoutItem,
-        setCheckoutItem,
-        clearCart
+        setCheckoutItem
       }}
     >
       {children}

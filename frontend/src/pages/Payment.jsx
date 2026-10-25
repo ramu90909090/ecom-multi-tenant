@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
@@ -22,10 +22,12 @@ import {
   AlertCircle,
   Tag,
   CheckCircle2,
-  ChevronRight
+  ChevronRight,
+  X,
+  Loader2
 } from "lucide-react";
 import PaymentInvoice from "../components/payment/PaymentInvoice";
-import { getImageUrl } from "../utils/productUtils";
+import { getImageUrl, calculateFinalPrice } from "../utils/productUtils";
 
 export default function Payment() {
   const { cart, checkoutItem, clearCart, setCheckoutItem } = useCart();
@@ -33,12 +35,14 @@ export default function Payment() {
   const { settings, tenant } = useSettings();
   const navigate = useNavigate();
 
-  // 1. Direct Checkout Item Check with LocalStorage Fallback (Prevents 'Checkout Khali Hai' error)
+  // 1. Direct Checkout Item Check with LocalStorage Fallback (Prevents 'Checkout Khali Hai' bug)
   const effectiveCheckoutItem =
     checkoutItem ||
     (() => {
       try {
-        const saved = localStorage.getItem("direct_checkout_item");
+        const saved =
+          sessionStorage.getItem("direct_checkout_item") ||
+          localStorage.getItem("direct_checkout_item");
         return saved ? JSON.parse(saved) : null;
       } catch {
         return null;
@@ -46,11 +50,11 @@ export default function Payment() {
     })();
 
   // Direct Buy Item has priority over entire Cart
-  const items = effectiveCheckoutItem
-    ? [effectiveCheckoutItem]
-    : cart && cart.length > 0
-    ? cart
-    : [];
+  const items = useMemo(() => {
+    if (effectiveCheckoutItem) return [effectiveCheckoutItem];
+    if (cart && cart.length > 0) return cart;
+    return [];
+  }, [effectiveCheckoutItem, cart]);
 
   // Checkout Stages: "checkout" | "success"
   const [stage, setStage] = useState("checkout");
@@ -61,17 +65,22 @@ export default function Payment() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [finalOrderData, setFinalOrderData] = useState(null);
 
-  // Coupon State
+  // Dynamic Coupon State (Default hardcoded coupon completely removed)
   const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
   const [couponDiscount, setCouponDiscount] = useState(0);
+  const [couponLoading, setCouponLoading] = useState(false);
   const [couponMsg, setCouponMsg] = useState({ type: "", text: "" });
 
-  // Store Brand & Payment Configuration (Supports both settings structures)
+  // Store Brand & Payment Configuration
   const storeName = settings?.navbar?.brandName || tenant?.storeName || "KHASTORE";
+  const storeSubtitle = settings?.navbar?.brandSubtitle || "Official Store Invoice";
+
   const merchantUpi =
     settings?.paymentGateway?.upiId ||
     settings?.payment?.upiId ||
     "juhip2019@okaxis";
+
   const merchantName =
     settings?.paymentGateway?.merchantName ||
     settings?.payment?.merchantName ||
@@ -80,7 +89,7 @@ export default function Payment() {
   // Shipping Form State (Auto-filled if user is logged in)
   const [shipping, setShipping] = useState({
     name: user?.name || "",
-    phone: user?.mobile || "",
+    phone: user?.mobile || user?.phone || "",
     email: user?.email || "",
     address: user?.address || "",
     city: user?.district || user?.city || "",
@@ -93,7 +102,7 @@ export default function Payment() {
       setShipping((prev) => ({
         ...prev,
         name: prev.name || user.name || "",
-        phone: prev.phone || user.mobile || "",
+        phone: prev.phone || user.mobile || user.phone || "",
         email: prev.email || user.email || "",
         address: prev.address || user.address || "",
         city: prev.city || user.district || user.city || "",
@@ -104,15 +113,20 @@ export default function Payment() {
   }, [user]);
 
   // Calculations
-  const itemsSubtotal = items.reduce((acc, it) => {
-    const unitPrice = Number(it.finalPrice || it.price || 0);
-    return acc + unitPrice * (it.quantity || 1);
-  }, 0);
+  const itemsSubtotal = useMemo(() => {
+    return items.reduce((acc, it) => {
+      const finalUnit =
+        it.finalPrice !== undefined && it.finalPrice !== null
+          ? Number(it.finalPrice)
+          : calculateFinalPrice(it.price, it.discount);
+      return acc + (Number(finalUnit) || 0) * (Number(it.quantity) || 1);
+    }, 0);
+  }, [items]);
 
   // Business Rules: Free Delivery above ₹1000, else ₹50. GST 18% calculated.
   const deliveryFee = itemsSubtotal >= 1000 || itemsSubtotal === 0 ? 0 : 50;
   const gstAmount = Math.round(itemsSubtotal * 0.18);
-  const netPayable = Math.max(0, itemsSubtotal + deliveryFee - couponDiscount);
+  const netPayable = Math.max(0, itemsSubtotal + gstAmount + deliveryFee - couponDiscount);
   const isCodEligible = itemsSubtotal >= 5000;
 
   // Dynamic UPI Deep-link & Dynamic QR Code
@@ -121,6 +135,7 @@ export default function Payment() {
   )}&am=${netPayable}&cu=INR&tn=${encodeURIComponent(`Order from ${storeName}`)}`;
 
   const configuredQr =
+    settings?.paymentGateway?.qrImageUrl ||
     settings?.paymentGateway?.paymentQrImage ||
     settings?.payment?.qrCodeImage ||
     settings?.payment?.qrImage;
@@ -137,16 +152,45 @@ export default function Payment() {
     setTimeout(() => setCopiedUpi(false), 2000);
   };
 
-  const handleApplyCoupon = (e) => {
+  // Real-time Database Coupon Validation API (Only Admin Created Coupons Allowed)
+  const handleApplyCoupon = async (e) => {
     e.preventDefault();
-    if (couponCode.trim().toUpperCase() === "KHA10") {
-      const discount = Math.round(itemsSubtotal * 0.1);
-      setCouponDiscount(discount);
-      setCouponMsg({ type: "success", text: "KHA10 Applied! 10% instant discount mil gaya." });
-    } else {
+    if (!couponCode.trim()) return;
+
+    const codeToTest = couponCode.trim().toUpperCase();
+    setCouponLoading(true);
+    setCouponMsg({ type: "", text: "" });
+
+    try {
+      const res = await API.post("/coupons/validate", {
+        code: codeToTest,
+        items,
+        totalAmount: itemsSubtotal
+      });
+
+      if (res.data?.success) {
+        const discountVal = Number(res.data.data.discountAmount) || 0;
+        setAppliedCoupon(res.data.data);
+        setCouponDiscount(discountVal);
+        setCouponMsg({ type: "success", text: res.data.message });
+      }
+    } catch (err) {
+      setAppliedCoupon(null);
       setCouponDiscount(0);
-      setCouponMsg({ type: "error", text: "Invalid Code. Use 'KHA10' to get 10% discount." });
+      setCouponMsg({
+        type: "error",
+        text: err.response?.data?.message || "Invalid ya Expired coupon code."
+      });
+    } finally {
+      setCouponLoading(false);
     }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponDiscount(0);
+    setCouponCode("");
+    setCouponMsg({ type: "", text: "" });
   };
 
   const handleFormChange = (e) => {
@@ -198,7 +242,8 @@ export default function Payment() {
         items: items.map((it) => ({
           product: it._id || it.id,
           name: it.name,
-          image: it.image || (Array.isArray(it.images) ? it.images[0] : ""),
+          category: it.category || "General",
+          image: it.image || (Array.isArray(it.images) ? it.images[0]?.url || it.images[0] : ""),
           price: Number(it.finalPrice || it.price),
           quantity: Number(it.quantity || 1),
           total: Number(it.finalPrice || it.price) * Number(it.quantity || 1)
@@ -244,6 +289,7 @@ export default function Payment() {
         // Clear direct item & cart state
         if (typeof setCheckoutItem === "function") setCheckoutItem(null);
         localStorage.removeItem("direct_checkout_item");
+        sessionStorage.removeItem("direct_checkout_item");
         if (!effectiveCheckoutItem) {
           clearCart();
         }
@@ -262,7 +308,7 @@ export default function Payment() {
     }
   };
 
-  // 2. Empty Checkout Guard (Only shows when both cart & direct item are absent)
+  // Empty Checkout Guard
   if (items.length === 0 && stage !== "success") {
     return (
       <div className="min-h-[75vh] flex items-center justify-center px-4">
@@ -285,7 +331,7 @@ export default function Payment() {
     );
   }
 
-  // 3. Stage: Order Success / Invoice View
+  // Stage: Order Success / Invoice View
   if (stage === "success" && finalOrderData) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8">
@@ -305,6 +351,7 @@ export default function Payment() {
           <PaymentInvoice
             order={finalOrderData}
             storeName={storeName}
+            storeSubtitle={storeSubtitle}
             onBackHome={() => navigate("/")}
           />
         </div>
@@ -314,30 +361,33 @@ export default function Payment() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      
       {/* Interactive Step Progress Wizard */}
       <div className="bg-white/80 backdrop-blur-md p-4 sm:p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between max-w-2xl mx-auto">
         <div className="flex items-center space-x-2 text-indigo-600 font-black text-xs">
-          <span className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]">1</span>
+          <span className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]">
+            1
+          </span>
           <span>Cart / Buy Now</span>
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300" />
         <div className="flex items-center space-x-2 text-pink-600 font-black text-xs">
-          <span className="w-6 h-6 rounded-full bg-pink-600 text-white flex items-center justify-center text-[11px]">2</span>
+          <span className="w-6 h-6 rounded-full bg-pink-600 text-white flex items-center justify-center text-[11px]">
+            2
+          </span>
           <span>Delivery & UPI Pay</span>
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300" />
         <div className="flex items-center space-x-2 text-slate-400 font-bold text-xs">
-          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[11px]">3</span>
+          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[11px]">
+            3
+          </span>
           <span>Receipt / Invoice</span>
         </div>
       </div>
 
       <form onSubmit={handleConfirmOrder} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
         {/* Left Column: Delivery Details & Payment Tabs (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
-          
           {/* A. Shipping Destination Card */}
           <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-100 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -375,7 +425,9 @@ export default function Payment() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Mobile Number (WhatsApp) *</label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Mobile Number (WhatsApp) *
+                </label>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
@@ -391,7 +443,9 @@ export default function Payment() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Email (For Invoice Slip) *</label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Email (For Invoice Slip) *
+                </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
@@ -407,7 +461,9 @@ export default function Payment() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">House No., Building, Street Area *</label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  House No., Building, Street Area *
+                </label>
                 <input
                   type="text"
                   required
@@ -456,7 +512,9 @@ export default function Payment() {
               </div>
               <div>
                 <h2 className="text-sm font-black text-slate-900 tracking-tight">2. Select Payment Option</h2>
-                <p className="text-[11px] text-slate-400 font-semibold">Direct UPI QR transfer ya Cash on delivery</p>
+                <p className="text-[11px] text-slate-400 font-semibold">
+                  Direct UPI QR transfer ya Cash on delivery
+                </p>
               </div>
             </div>
 
@@ -471,7 +529,11 @@ export default function Payment() {
                     : "border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700"
                 }`}
               >
-                <div className={`p-2 rounded-xl ${paymentMode === "upi" ? "bg-pink-600 text-white" : "bg-white text-slate-600"}`}>
+                <div
+                  className={`p-2 rounded-xl ${
+                    paymentMode === "upi" ? "bg-pink-600 text-white" : "bg-white text-slate-600"
+                  }`}
+                >
                   <QrCode className="w-5 h-5" />
                 </div>
                 <div>
@@ -482,21 +544,32 @@ export default function Payment() {
 
               <button
                 type="button"
-                onClick={() => setPaymentMode("cod")}
+                onClick={() => {
+                  if (isCodEligible) setPaymentMode("cod");
+                  else alert("Cash on Delivery sirf ₹5,000 se upar ke order par uplabdh hai.");
+                }}
                 className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center space-x-3 ${
-                  paymentMode === "cod"
+                  !isCodEligible
+                    ? "opacity-50 border-slate-200 bg-slate-100 cursor-not-allowed"
+                    : paymentMode === "cod"
                     ? "border-emerald-500 bg-emerald-50/40 text-emerald-800 ring-2 ring-emerald-500/20 shadow-sm"
                     : "border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700"
                 }`}
               >
-                <div className={`p-2 rounded-xl ${paymentMode === "cod" ? "bg-emerald-600 text-white" : "bg-white text-slate-600"}`}>
+                <div
+                  className={`p-2 rounded-xl ${
+                    paymentMode === "cod" ? "bg-emerald-600 text-white" : "bg-white text-slate-600"
+                  }`}
+                >
                   <Banknote className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center space-x-1.5">
                     <h4 className="text-xs font-black">Cash On Delivery</h4>
                     {isCodEligible && (
-                      <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded">Eligible</span>
+                      <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded">
+                        Eligible
+                      </span>
                     )}
                   </div>
                   <p className="text-[10px] text-slate-400 font-semibold">Orders &gt; ₹5,000 only</p>
@@ -508,7 +581,6 @@ export default function Payment() {
             {paymentMode === "upi" && (
               <div className="p-5 rounded-3xl bg-gradient-to-br from-violet-50/60 via-pink-50/30 to-amber-50/40 border border-pink-100 space-y-4 animate-in fade-in duration-200">
                 <div className="flex flex-col sm:flex-row items-center gap-5">
-                  
                   {/* Dynamic QR Box */}
                   <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md text-center shrink-0">
                     <img
@@ -516,7 +588,9 @@ export default function Payment() {
                       alt="UPI QR Code"
                       className="w-36 h-36 object-contain rounded-xl mx-auto"
                       onError={(e) => {
-                        e.target.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiDeepLink)}`;
+                        e.target.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                          upiDeepLink
+                        )}`;
                       }}
                     />
                     <span className="text-[10px] font-black text-slate-500 mt-1.5 block uppercase tracking-wider">
@@ -527,7 +601,9 @@ export default function Payment() {
                   {/* Merchant Details & Deep Link */}
                   <div className="space-y-3 flex-1 text-center sm:text-left">
                     <div>
-                      <span className="text-[10px] font-black uppercase tracking-wider text-pink-600">Merchant UPI VPA</span>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-pink-600">
+                        Merchant UPI VPA
+                      </span>
                       <div className="flex items-center justify-center sm:justify-start space-x-2 mt-0.5">
                         <code className="text-xs font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
                           {merchantUpi}
@@ -538,9 +614,14 @@ export default function Payment() {
                           className="p-1.5 bg-white border border-slate-200 hover:bg-pink-50 text-slate-700 hover:text-pink-600 rounded-lg transition cursor-pointer"
                           title="Copy UPI ID"
                         >
-                          {copiedUpi ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedUpi ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
                         </button>
                       </div>
+                      <p className="text-[11px] text-slate-400 font-semibold mt-1">Name: {merchantName}</p>
                     </div>
 
                     {/* Mobile 1-Click Pay Button */}
@@ -598,18 +679,17 @@ export default function Payment() {
                   </p>
                 ) : (
                   <p className="text-rose-600 font-bold">
-                    ⚠️ COD sirf ₹5,000 se adhik ke orders par uplabdh hai. Aapka order amount ₹{itemsSubtotal.toLocaleString()} hai. Kripya UPI QR payment option select karein.
+                    ⚠️ COD sirf ₹5,000 se adhik ke orders par uplabdh hai. Aapka order amount ₹
+                    {itemsSubtotal.toLocaleString()} hai. Kripya UPI QR payment option select karein.
                   </p>
                 )}
               </div>
             )}
-
           </div>
         </div>
 
         {/* Right Column: Sticky Summary, Items & Confirm Button (5 cols) */}
         <div className="lg:col-span-5 sticky top-24 space-y-5">
-          
           <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-100 shadow-xl shadow-pink-500/5 space-y-5">
             <h3 className="text-base font-black text-slate-900 tracking-tight pb-3 border-b border-slate-100 flex items-center justify-between">
               <span>Order Summary</span>
@@ -619,18 +699,32 @@ export default function Payment() {
             {/* Selected Items List */}
             <div className="max-h-60 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
               {items.map((item, idx) => {
-                const img = item.image || (Array.isArray(item.images) ? item.images[0] : "");
-                const itemPrice = Number(item.finalPrice || item.price || 0);
+                const img =
+                  item.image ||
+                  (Array.isArray(item.images) && item.images.length > 0
+                    ? typeof item.images[0] === "object"
+                      ? item.images[0].url
+                      : item.images[0]
+                    : "");
+                const itemPrice = Number(
+                  item.finalPrice !== undefined && item.finalPrice !== null
+                    ? item.finalPrice
+                    : calculateFinalPrice(item.price, item.discount)
+                );
 
                 return (
-                  <div key={idx} className="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-2xl border border-slate-100 text-xs">
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-2xl border border-slate-100 text-xs"
+                  >
                     <div className="flex items-center space-x-3">
                       <img
                         src={getImageUrl(img)}
                         alt={item.name}
                         className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0 bg-white"
                         onError={(e) => {
-                          e.target.src = "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&q=80";
+                          e.target.src =
+                            "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&q=80";
                         }}
                       />
                       <div className="max-w-[150px] sm:max-w-[180px]">
@@ -648,31 +742,61 @@ export default function Payment() {
               })}
             </div>
 
-            {/* Coupon Code Input */}
+            {/* Dynamic Coupon Code Input & Applied Pill (Only Live Admin Coupons) */}
             <div className="pt-2">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Tag className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type="text"
-                    placeholder="Coupon (e.g. KHA10)"
-                    value={couponCode}
-                    onChange={(e) => setCouponCode(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold uppercase outline-none focus:bg-white focus:border-pink-500"
-                  />
+              {appliedCoupon ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-mono font-black text-emerald-800 uppercase tracking-wider">
+                      {appliedCoupon.code} APPLIED
+                    </span>
+                    <p className="text-[10px] text-emerald-600 font-bold">
+                      Saved ₹{couponDiscount.toLocaleString()}{" "}
+                      {appliedCoupon.applicableCategory && `(${appliedCoupon.applicableCategory} Category)`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveCoupon}
+                    className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer transition"
+                    title="Remove Coupon"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleApplyCoupon}
-                  className="px-4 py-2 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer"
-                >
-                  Apply
-                </button>
-              </div>
-              {couponMsg.text && (
-                <p className={`text-[10px] font-bold mt-1.5 ${couponMsg.type === "success" ? "text-emerald-600" : "text-rose-600"}`}>
-                  {couponMsg.text}
-                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Tag className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="text"
+                        placeholder="Enter Promo Coupon Code..."
+                        value={couponCode}
+                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                        className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-black uppercase outline-none focus:bg-white focus:border-pink-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={couponLoading || !couponCode.trim()}
+                      onClick={handleApplyCoupon}
+                      className="px-4 py-2 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                    >
+                      {couponLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                      <span>{couponLoading ? "Checking..." : "Apply"}</span>
+                    </button>
+                  </div>
+                  {couponMsg.text && (
+                    <p
+                      className={`text-[10px] font-bold ${
+                        couponMsg.type === "success" ? "text-emerald-600" : "text-rose-600"
+                      }`}
+                    >
+                      {couponMsg.text}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 
@@ -694,7 +818,7 @@ export default function Payment() {
               </div>
               {couponDiscount > 0 && (
                 <div className="flex justify-between text-pink-600 font-bold">
-                  <span>Promo Discount (10%)</span>
+                  <span>Coupon Discount</span>
                   <span>-₹{couponDiscount.toLocaleString()}</span>
                 </div>
               )}
@@ -730,9 +854,7 @@ export default function Payment() {
               🔒 256-bit Encrypted Checkout • Instant WhatsApp Notification Dispatched
             </p>
           </div>
-
         </div>
-
       </form>
     </div>
   );

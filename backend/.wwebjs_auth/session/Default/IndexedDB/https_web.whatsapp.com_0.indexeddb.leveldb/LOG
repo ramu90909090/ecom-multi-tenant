@@ -1,3 +1,12 @@
-2026/10/25-14:47:52.521 179c Reusing MANIFEST C:\Users\rahul\Desktop\ecomme_multi_tent\backend\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/10/25-14:47:52.522 179c Recovering log #21
-2026/10/25-14:47:52.616 179c Reusing old log C:\Users\rahul\Desktop\ecomme_multi_tent\backend\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000021.log 
+2026/10/25-17:54:26.720 df8 Reusing MANIFEST C:\Users\rahul\Desktop\ecomme_multi_tent\backend\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/10/25-17:54:26.721 df8 Recovering log #25
+2026/10/25-17:54:26.862 df8 Reusing old log C:\Users\rahul\Desktop\ecomme_multi_tent\backend\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000025.log 
+2026/10/25-17:54:36.162 3478 Level-0 table #30: started
+2026/10/25-17:54:36.294 3478 Level-0 table #30: 1298761 bytes OK
+2026/10/25-17:54:36.308 3478 Delete type=0 #25
+2026/10/25-17:55:39.574 4020 Compacting 1@1 + 1@2 files
+2026/10/25-17:55:39.683 4020 Generated table #31@1: 56179 keys, 1979039 bytes
+2026/10/25-17:55:39.683 4020 Compacted 1@1 + 1@2 files => 1979039 bytes
+2026/10/25-17:55:39.688 4020 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/10/25-17:55:39.689 4020 Delete type=2 #27
+2026/10/25-17:55:39.689 4020 Delete type=2 #30

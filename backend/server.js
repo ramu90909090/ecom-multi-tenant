@@ -26,6 +26,7 @@ const settingsRoutes = require("./routes/settingsRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const userRoutes = require("./routes/userRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
+const couponRoutes = require("./routes/couponRoutes");
 
 // WhatsApp Engine & Background Message Queue Services
 const whatsappService = require("./services/whatsappService");
@@ -88,6 +89,7 @@ const corsOptions = {
   allowedHeaders: allowedHeadersList
 };
 
+// Global CORS Middleware (Preflight OPTIONS requests ko khud handle karta hai)
 app.use(cors(corsOptions));
 
 // 3. Rate Limiting (Relaxed for Development & High Dashboard Activity)
@@ -95,7 +97,6 @@ const isDev = process.env.NODE_ENV !== "production";
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  // Development me 3000 requests aur production me 1000 requests allow karein
   max: isDev ? 3000 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
@@ -103,7 +104,6 @@ const generalLimiter = rateLimit({
     success: false,
     message: "Too many requests from this IP. Please try again after 15 minutes."
   },
-  // Development testing me polling ya localhost ko block na hone de
   skip: (req) =>
     isDev &&
     (req.ip === "127.0.0.1" ||
@@ -175,13 +175,14 @@ app.use("/api/v1/settings", settingsRoutes);
 app.use("/api/v1/orders", orderRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/whatsapp", whatsappRoutes);
+app.use("/api/v1/coupons", couponRoutes);
 
 // 11. Health Check Endpoint
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "OK", timestamp: new Date() });
 });
 
-// 12. 404 Handler for Unhandled API Routes
+// 12. 404 Handler for Unhandled API Routes (Express 5 safe syntax)
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -207,7 +208,7 @@ app.listen(PORT, () => {
   console.log(`📁 Static files serving at: http://localhost:${PORT}/uploads`);
   console.log(`🔗 Multi-Tenant Support: Enabled for all subdomains & origins`);
 
-  // A. Resume / Process Pending Email Queue on Server Startup
+  // A. Resume Pending Email Queue
   try {
     if (typeof processEmailQueue === "function") {
       processEmailQueue();
@@ -216,7 +217,7 @@ app.listen(PORT, () => {
     console.warn("⚠️ Email Queue Startup Warning:", err.message);
   }
 
-  // B. Initialize WhatsApp Service & Resume WhatsApp Message Queue
+  // B. Initialize WhatsApp Service & Resume Queue
   try {
     if (
       whatsappService &&
