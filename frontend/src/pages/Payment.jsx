@@ -11,20 +11,21 @@ import {
   Copy,
   Check,
   QrCode,
-  ArrowRight,
-  Sparkles,
   ShoppingBag,
-  Truck,
   MapPin,
   User,
   Phone,
   Mail,
-  AlertCircle,
   Tag,
   CheckCircle2,
   ChevronRight,
   X,
-  Loader2
+  Loader2,
+  AlertTriangle,
+  ExternalLink,
+  Smartphone,
+  Percent,
+  Truck
 } from "lucide-react";
 import PaymentInvoice from "../components/payment/PaymentInvoice";
 import { getImageUrl, calculateFinalPrice } from "../utils/productUtils";
@@ -35,7 +36,7 @@ export default function Payment() {
   const { settings, tenant } = useSettings();
   const navigate = useNavigate();
 
-  // 1. Direct Checkout Item Check with LocalStorage Fallback (Prevents 'Checkout Khali Hai' bug)
+  // Storage fallback to prevent empty checkout on refresh
   const effectiveCheckoutItem =
     checkoutItem ||
     (() => {
@@ -49,44 +50,59 @@ export default function Payment() {
       }
     })();
 
-  // Direct Buy Item has priority over entire Cart
   const items = useMemo(() => {
     if (effectiveCheckoutItem) return [effectiveCheckoutItem];
     if (cart && cart.length > 0) return cart;
     return [];
   }, [effectiveCheckoutItem, cart]);
 
-  // Checkout Stages: "checkout" | "success"
   const [stage, setStage] = useState("checkout");
-  const [paymentMode, setPaymentMode] = useState("upi"); // "upi" | "cod"
+  const [paymentMode, setPaymentMode] = useState("upi");
   const [utrNumber, setUtrNumber] = useState("");
   const [utrError, setUtrError] = useState("");
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [finalOrderData, setFinalOrderData] = useState(null);
 
-  // Dynamic Coupon State (Default hardcoded coupon completely removed)
+  // Dynamic Coupon States
   const [couponCode, setCouponCode] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState(null);
   const [couponDiscount, setCouponDiscount] = useState(0);
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponMsg, setCouponMsg] = useState({ type: "", text: "" });
 
+  // Dynamic Category-wise GST State
+  const [gstInfo, setGstInfo] = useState({
+    rate: 0,
+    amount: 0,
+    appliedCategory: null,
+    ruleApplied: "Evaluating GST..."
+  });
+
+  // Dynamic Category-wise Delivery Charge State
+  const [deliveryInfo, setDeliveryInfo] = useState({
+    fee: 0,
+    originalFee: 0,
+    appliedCategory: null,
+    freeThreshold: 1000,
+    isFree: true,
+    estimatedDays: "2-4 Business Days",
+    ruleNote: "Calculating delivery..."
+  });
+
   // Store Brand & Payment Configuration
   const storeName = settings?.navbar?.brandName || tenant?.storeName || "KHASTORE";
   const storeSubtitle = settings?.navbar?.brandSubtitle || "Official Store Invoice";
 
-  const merchantUpi =
-    settings?.paymentGateway?.upiId ||
-    settings?.payment?.upiId ||
-    "juhip2019@okaxis";
+  const paymentConfig = settings?.paymentGateway || settings?.payment || {};
+  const merchantUpi = paymentConfig.upiId || "juhip2019@okaxis";
+  const merchantName = paymentConfig.merchantName || storeName;
+  const verificationNote =
+    paymentConfig.verificationNote ||
+    `Payment karte waqt verify karein ki receiver UPI ID ${merchantUpi} (Name: ${merchantName}) hi show ho rahi ho.`;
+  const codMinAmount = paymentConfig.codMinAmount || 5000;
 
-  const merchantName =
-    settings?.paymentGateway?.merchantName ||
-    settings?.payment?.merchantName ||
-    storeName;
-
-  // Shipping Form State (Auto-filled if user is logged in)
+  // Shipping Form State
   const [shipping, setShipping] = useState({
     name: user?.name || "",
     phone: user?.mobile || user?.phone || "",
@@ -112,7 +128,7 @@ export default function Payment() {
     }
   }, [user]);
 
-  // Calculations
+  // Base Subtotal Calculation
   const itemsSubtotal = useMemo(() => {
     return items.reduce((acc, it) => {
       const finalUnit =
@@ -123,22 +139,94 @@ export default function Payment() {
     }, 0);
   }, [items]);
 
-  // Business Rules: Free Delivery above ₹1000, else ₹50. GST 18% calculated.
-  const deliveryFee = itemsSubtotal >= 1000 || itemsSubtotal === 0 ? 0 : 50;
-  const gstAmount = Math.round(itemsSubtotal * 0.18);
-  const netPayable = Math.max(0, itemsSubtotal + gstAmount + deliveryFee - couponDiscount);
-  const isCodEligible = itemsSubtotal >= 5000;
+  // Dynamic GST & Delivery Evaluation
+  useEffect(() => {
+    const evaluatePricing = async () => {
+      if (!items.length || itemsSubtotal <= 0) {
+        setGstInfo({ rate: 0, amount: 0, appliedCategory: null, ruleApplied: "Cart Empty" });
+        setDeliveryInfo({ fee: 0, originalFee: 0, appliedCategory: null, freeThreshold: 1000, isFree: true, estimatedDays: "2-4 Days", ruleNote: "Cart Empty" });
+        return;
+      }
 
-  // Dynamic UPI Deep-link & Dynamic QR Code
+      const payloadItems = items.map((it) => ({
+        product: it._id || it.id,
+        category: it.category || "General",
+        price: Number(it.finalPrice || it.price || 0),
+        quantity: Number(it.quantity || 1)
+      }));
+
+      // 1. Evaluate GST
+      try {
+        const gstRes = await API.post("/gst/calculate", { items: payloadItems, subtotal: itemsSubtotal });
+        if (gstRes.data?.success && gstRes.data?.data) {
+          setGstInfo({
+            rate: Number(gstRes.data.data.gstRate) || 0,
+            amount: Number(gstRes.data.data.gstAmount) || 0,
+            appliedCategory: gstRes.data.data.appliedCategory,
+            ruleApplied: gstRes.data.data.ruleApplied
+          });
+        }
+      } catch {
+        setGstInfo({ rate: 0, amount: 0, appliedCategory: null, ruleApplied: "0% GST (Tax Exempted)" });
+      }
+
+      // 2. Evaluate Delivery Fee
+      try {
+        const delRes = await API.post("/delivery/calculate", { items: payloadItems, subtotal: itemsSubtotal });
+        if (delRes.data?.success && delRes.data?.data) {
+          const d = delRes.data.data;
+          setDeliveryInfo({
+            fee: Number(d.deliveryFee) || 0,
+            originalFee: Number(d.originalFee) || 0,
+            appliedCategory: d.appliedCategory,
+            freeThreshold: Number(d.freeThreshold) || 1000,
+            isFree: Boolean(d.isFree),
+            estimatedDays: d.estimatedDays || "2-4 Business Days",
+            ruleNote: d.ruleNote || ""
+          });
+        }
+      } catch {
+        // Fallback default calculation
+        const fallbackFree = itemsSubtotal >= 1000;
+        setDeliveryInfo({
+          fee: fallbackFree ? 0 : 50,
+          originalFee: 50,
+          appliedCategory: null,
+          freeThreshold: 1000,
+          isFree: fallbackFree,
+          estimatedDays: "2-4 Business Days",
+          ruleNote: fallbackFree ? "Free Delivery" : "Standard Delivery"
+        });
+      }
+    };
+
+    evaluatePricing();
+  }, [items, itemsSubtotal]);
+
+  const deliveryFee = deliveryInfo.fee;
+  const gstAmount = gstInfo.amount;
+  const netPayable = Math.max(0, itemsSubtotal + gstAmount + deliveryFee - couponDiscount);
+  const isCodEligible = itemsSubtotal >= codMinAmount;
+
+  const productSummary = useMemo(() => {
+    if (!items.length) return "Store Order";
+    const names = items.map((i) => i.name).join(", ");
+    return names.length > 30 ? names.substring(0, 27) + "..." : names;
+  }, [items]);
+
+  const [orderId] = useState(
+    () => `ORD-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`
+  );
+
   const upiDeepLink = `upi://pay?pa=${encodeURIComponent(merchantUpi)}&pn=${encodeURIComponent(
     merchantName
-  )}&am=${netPayable}&cu=INR&tn=${encodeURIComponent(`Order from ${storeName}`)}`;
+  )}&am=${netPayable}&cu=INR&tr=${orderId}&tn=${encodeURIComponent(`${storeName} | ${orderId}`)}`;
 
   const configuredQr =
-    settings?.paymentGateway?.qrImageUrl ||
-    settings?.paymentGateway?.paymentQrImage ||
-    settings?.payment?.qrCodeImage ||
-    settings?.payment?.qrImage;
+    paymentConfig.qrImageUrl ||
+    paymentConfig.paymentQrImage ||
+    paymentConfig.qrCodeImage ||
+    paymentConfig.qrImage;
 
   const qrImage = configuredQr
     ? getImageUrl(configuredQr)
@@ -152,34 +240,53 @@ export default function Payment() {
     setTimeout(() => setCopiedUpi(false), 2000);
   };
 
-  // Real-time Database Coupon Validation API (Only Admin Created Coupons Allowed)
   const handleApplyCoupon = async (e) => {
     e.preventDefault();
-    if (!couponCode.trim()) return;
-
     const codeToTest = couponCode.trim().toUpperCase();
+    if (!codeToTest) {
+      setCouponMsg({ type: "error", text: "Kripya coupon code enter karein." });
+      return;
+    }
+
     setCouponLoading(true);
     setCouponMsg({ type: "", text: "" });
 
     try {
       const res = await API.post("/coupons/validate", {
         code: codeToTest,
-        items,
-        totalAmount: itemsSubtotal
+        items: items.map((it) => ({
+          product: it._id || it.id,
+          name: it.name,
+          category: it.category || "All",
+          price: Number(it.finalPrice || it.price || 0),
+          quantity: Number(it.quantity || 1)
+        })),
+        totalAmount: itemsSubtotal,
+        cartSubtotal: itemsSubtotal
       });
 
-      if (res.data?.success) {
+      if (res.data?.success && res.data?.data) {
         const discountVal = Number(res.data.data.discountAmount) || 0;
         setAppliedCoupon(res.data.data);
         setCouponDiscount(discountVal);
-        setCouponMsg({ type: "success", text: res.data.message });
+        setCouponMsg({
+          type: "success",
+          text: res.data.message || `Coupon '${res.data.data.code}' applied!`
+        });
+      } else {
+        setAppliedCoupon(null);
+        setCouponDiscount(0);
+        setCouponMsg({
+          type: "error",
+          text: res.data?.message || "Invalid coupon code."
+        });
       }
     } catch (err) {
       setAppliedCoupon(null);
       setCouponDiscount(0);
       setCouponMsg({
         type: "error",
-        text: err.response?.data?.message || "Invalid ya Expired coupon code."
+        text: err.response?.data?.message || "Coupon verify karne me dikkat aayi."
       });
     } finally {
       setCouponLoading(false);
@@ -197,63 +304,58 @@ export default function Payment() {
     setShipping({ ...shipping, [e.target.name]: e.target.value });
   };
 
-  // Submit & Create Order
   const handleConfirmOrder = async (e) => {
     e.preventDefault();
     setUtrError("");
 
-    // Validate Shipping Form
     if (
       !shipping.name.trim() ||
       !shipping.phone.trim() ||
       !shipping.address.trim() ||
-      !shipping.pincode.trim()
+      !shipping.pincode.trim() ||
+      !shipping.city.trim()
     ) {
-      alert("Kripya saari required delivery details bharein.");
+      alert("Kripya saari mandatory delivery details bharein.");
       return;
     }
 
-    // Validate Payment Mode
     if (paymentMode === "upi") {
       const cleanUtr = utrNumber.trim();
       if (!cleanUtr) {
-        setUtrError(
-          "Payment complete karne ke liye 12-digit UTR/UPI Reference Number daalna zaroori hai."
-        );
+        setUtrError("Bank Transaction UTR / Ref No. daalna mandatory hai.");
         return;
       }
       if (cleanUtr.length < 8) {
-        setUtrError("Kripya valid bank UTR / Ref Number (minimum 8-12 digits) enter karein.");
+        setUtrError("Kripya valid 8-12 digit UTR Number daalein.");
         return;
       }
     }
 
     if (paymentMode === "cod" && !isCodEligible) {
-      alert("Cash On Delivery sirf ₹5,000 se upar ke orders par available hai.");
+      alert(`Cash on Delivery sirf ₹${codMinAmount.toLocaleString()} se upar ke orders par available hai.`);
       return;
     }
 
     setIsProcessing(true);
-    const generatedOrderId = "ORD-" + Date.now().toString().slice(-6);
 
     try {
       const orderPayload = {
-        orderId: generatedOrderId,
+        orderId,
         items: items.map((it) => ({
           product: it._id || it.id,
           name: it.name,
           category: it.category || "General",
           image: it.image || (Array.isArray(it.images) ? it.images[0]?.url || it.images[0] : ""),
-          price: Number(it.finalPrice || it.price),
+          price: Number(it.finalPrice || it.price || 0),
           quantity: Number(it.quantity || 1),
-          total: Number(it.finalPrice || it.price) * Number(it.quantity || 1)
+          total: Number(it.finalPrice || it.price || 0) * Number(it.quantity || 1)
         })),
         shippingDetails: {
           name: shipping.name.trim(),
           phone: shipping.phone.trim(),
           email: shipping.email ? shipping.email.trim() : "",
           address: shipping.address.trim(),
-          city: shipping.city.trim() || "Local City",
+          city: shipping.city.trim(),
           state: shipping.state.trim() || "Uttar Pradesh",
           pincode: shipping.pincode.trim()
         },
@@ -264,9 +366,13 @@ export default function Payment() {
         },
         pricing: {
           subtotal: itemsSubtotal,
+          gstRate: gstInfo.rate,
           gstAmount,
+          gstCategoryApplied: gstInfo.appliedCategory,
           deliveryFee,
+          deliveryCategoryApplied: deliveryInfo.appliedCategory,
           couponDiscount,
+          couponCode: appliedCoupon ? appliedCoupon.code : "",
           totalPayable: netPayable
         },
         userId: user?._id || user?.id || null
@@ -286,7 +392,6 @@ export default function Payment() {
 
         setStage("success");
 
-        // Clear direct item & cart state
         if (typeof setCheckoutItem === "function") setCheckoutItem(null);
         localStorage.removeItem("direct_checkout_item");
         sessionStorage.removeItem("direct_checkout_item");
@@ -297,18 +402,12 @@ export default function Payment() {
         alert(res.data?.message || "Order place karne me dikkat aayi.");
       }
     } catch (err) {
-      console.error("Order submission error:", err);
-      alert(
-        err.response?.data?.message ||
-          err.message ||
-          "Order create karne me problem aayi. Stock verify karein."
-      );
+      alert(err.response?.data?.message || err.message || "Order create nahi ho saka.");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Empty Checkout Guard
   if (items.length === 0 && stage !== "success") {
     return (
       <div className="min-h-[75vh] flex items-center justify-center px-4">
@@ -318,7 +417,7 @@ export default function Payment() {
           </div>
           <h2 className="text-2xl font-black text-slate-900">Checkout Khali Hai</h2>
           <p className="text-xs text-slate-500 font-medium">
-            Aapne abhi koi product select nahi kiya hai. Kisi bhi product par <b>Buy Now</b> click karein ya cart me add karein.
+            Aapne abhi koi product choose nahi kiya hai. Catalog se product select karein.
           </p>
           <button
             onClick={() => navigate("/products")}
@@ -331,7 +430,6 @@ export default function Payment() {
     );
   }
 
-  // Stage: Order Success / Invoice View
   if (stage === "success" && finalOrderData) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8">
@@ -343,13 +441,14 @@ export default function Payment() {
             Order Safaltapoorvak Place Ho Gaya!
           </h1>
           <p className="text-xs text-slate-500">
-            Aapka Order ID <b className="text-slate-800">#{finalOrderData.orderId}</b> generate ho chuka hai. Slip niche se print ya save karein.
+            Order ID <b className="text-slate-800">#{finalOrderData.orderId}</b> generate ho chuka hai. Slip print ya download kar sakte hain.
           </p>
         </div>
 
         <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden">
           <PaymentInvoice
             order={finalOrderData}
+            finalOrderData={finalOrderData}
             storeName={storeName}
             storeSubtitle={storeSubtitle}
             onBackHome={() => navigate("/")}
@@ -360,35 +459,219 @@ export default function Payment() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Interactive Step Progress Wizard */}
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 font-sans">
+      {/* Wizard */}
       <div className="bg-white/80 backdrop-blur-md p-4 sm:p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between max-w-2xl mx-auto">
         <div className="flex items-center space-x-2 text-indigo-600 font-black text-xs">
-          <span className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]">
-            1
-          </span>
+          <span className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]">1</span>
           <span>Cart / Buy Now</span>
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300" />
         <div className="flex items-center space-x-2 text-pink-600 font-black text-xs">
-          <span className="w-6 h-6 rounded-full bg-pink-600 text-white flex items-center justify-center text-[11px]">
-            2
-          </span>
-          <span>Delivery & UPI Pay</span>
+          <span className="w-6 h-6 rounded-full bg-pink-600 text-white flex items-center justify-center text-[11px]">2</span>
+          <span>Payment & Address</span>
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300" />
         <div className="flex items-center space-x-2 text-slate-400 font-bold text-xs">
-          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[11px]">
-            3
-          </span>
-          <span>Receipt / Invoice</span>
+          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-[11px]">3</span>
+          <span>Receipt / Slip</span>
         </div>
       </div>
 
       <form onSubmit={handleConfirmOrder} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Column: Delivery Details & Payment Tabs (7 cols) */}
+        {/* Left Column: Payment & Delivery Details */}
         <div className="lg:col-span-7 space-y-6">
-          {/* A. Shipping Destination Card */}
+          
+          {/* 1. SELECT PAYMENT METHOD */}
+          <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-100 shadow-sm space-y-5">
+            <div className="flex items-center space-x-2.5 pb-3 border-b border-slate-100">
+              <div className="w-9 h-9 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
+                <CreditCard className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm font-black text-slate-900 tracking-tight">1. Select Payment Option</h2>
+                <p className="text-[11px] text-slate-400 font-semibold">Direct UPI QR transfer ya Cash on delivery</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setPaymentMode("upi")}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center space-x-3 ${
+                  paymentMode === "upi"
+                    ? "border-pink-500 bg-pink-50/40 text-pink-700 ring-2 ring-pink-500/20 shadow-sm"
+                    : "border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700"
+                }`}
+              >
+                <div className={`p-2 rounded-xl ${paymentMode === "upi" ? "bg-pink-600 text-white" : "bg-white text-slate-600"}`}>
+                  <QrCode className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black">UPI QR Instant Pay</h4>
+                  <p className="text-[10px] text-slate-400 font-semibold">GPay, PhonePe, Paytm</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCodEligible) setPaymentMode("cod");
+                  else alert(`Cash on Delivery sirf ₹${codMinAmount.toLocaleString()} se upar ke order par available hai.`);
+                }}
+                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center space-x-3 ${
+                  !isCodEligible
+                    ? "opacity-50 border-slate-200 bg-slate-100 cursor-not-allowed"
+                    : paymentMode === "cod"
+                    ? "border-amber-500 bg-amber-50/40 text-amber-800 ring-2 ring-amber-500/20 shadow-sm"
+                    : "border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700"
+                }`}
+              >
+                <div className={`p-2 rounded-xl ${paymentMode === "cod" ? "bg-amber-600 text-white" : "bg-white text-slate-600"}`}>
+                  <Banknote className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black">Cash on Delivery</h4>
+                  <p className="text-[10px] text-slate-400 font-semibold">
+                    {isCodEligible ? `Available (> ₹${codMinAmount.toLocaleString()})` : `Min ₹${codMinAmount.toLocaleString()} required`}
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {paymentMode === "upi" && (
+              <div className="space-y-4 pt-2">
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start space-x-3 text-xs text-amber-900">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-black text-amber-800">Payment ID Verification Alert:</p>
+                    <p className="text-[11px] leading-relaxed">{verificationNote}</p>
+                  </div>
+                </div>
+
+                {/* DYNAMIC QR CARD */}
+                <div className="bg-gradient-to-br from-gray-50 to-slate-100 p-5 rounded-3xl border border-gray-200 flex flex-col sm:flex-row items-center gap-6">
+                  <div className="bg-white p-4 rounded-3xl border border-gray-200 shadow-md flex flex-col items-center w-64 shrink-0">
+                    <div className="text-center pb-2 border-b border-gray-100 w-full">
+                      <span className="text-xs font-black tracking-wider uppercase bg-gradient-to-r from-violet-600 to-pink-600 bg-clip-text text-transparent">
+                        {storeName}
+                      </span>
+                      <p className="text-[9px] font-bold text-gray-400">Order: {orderId}</p>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5 my-2">
+                      <div className="w-6 h-6 rounded-full bg-amber-600 text-white font-bold flex items-center justify-center text-[10px]">
+                        {merchantName.charAt(0)}
+                      </div>
+                      <span className="font-extrabold text-xs text-gray-800">{merchantName}</span>
+                    </div>
+
+                    <div className="w-48 h-48 rounded-2xl overflow-hidden border border-gray-100 bg-white p-1">
+                      <img
+                        src={qrImage}
+                        alt="Dynamic QR"
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          e.target.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                            upiDeepLink
+                          )}`;
+                        }}
+                      />
+                    </div>
+
+                    <p className="font-mono text-xs font-bold text-gray-700 mt-2">{merchantUpi}</p>
+
+                    <div className="mt-1 bg-gray-50 px-2.5 py-1 rounded-lg border border-gray-100 text-center w-full">
+                      <p className="text-[10px] text-gray-500 font-bold truncate">For: {productSummary}</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyUpi}
+                      className="mt-2 inline-flex items-center space-x-1 px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[10px] font-bold transition cursor-pointer"
+                    >
+                      {copiedUpi ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span className="text-emerald-600">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy UPI ID</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="flex-1 space-y-3 w-full text-xs">
+                    <div className="bg-white p-3.5 rounded-2xl border border-gray-200 space-y-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase">Grand Total Payable</span>
+                      <p className="text-2xl font-black text-gray-900">₹{netPayable.toLocaleString()}</p>
+                      <div className="pt-1 border-t border-gray-100 space-y-0.5 text-[11px] text-gray-500">
+                        <p><strong className="text-gray-700">Store:</strong> {storeName}</p>
+                        <p><strong className="text-gray-700">Order ID:</strong> {orderId}</p>
+                        <p className="truncate"><strong className="text-gray-700">Items:</strong> {productSummary}</p>
+                      </div>
+                    </div>
+
+                    <a
+                      href={upiDeepLink}
+                      className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-500 hover:opacity-95 text-white font-bold rounded-xl flex items-center justify-center space-x-2 shadow-md transition"
+                    >
+                      <Smartphone className="w-4 h-4" />
+                      <span>Pay via UPI App Directly</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+
+                {/* UTR Input */}
+                <div className="p-4 bg-pink-50/60 rounded-2xl border border-pink-200 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="font-black text-xs text-gray-900">
+                      Bank Transaction UTR / Ref No. * (Mandatory)
+                    </label>
+                    <span className="text-[10px] font-bold text-pink-600 bg-white px-2 py-0.5 rounded-md border border-pink-200">
+                      Verification Required
+                    </span>
+                  </div>
+
+                  <input
+                    type="text"
+                    required
+                    maxLength={16}
+                    placeholder="Enter 12-digit UTR No. (e.g. 428731908234)"
+                    value={utrNumber}
+                    onChange={(e) => {
+                      setUtrNumber(e.target.value.replace(/[^0-9a-zA-Z]/g, ""));
+                      setUtrError("");
+                    }}
+                    className={`w-full bg-white rounded-xl px-3.5 py-2.5 font-mono font-bold text-xs outline-none border transition ${
+                      utrError
+                        ? "border-rose-500 ring-2 ring-rose-500/20 text-rose-700"
+                        : "border-gray-300 focus:border-pink-500 text-gray-900"
+                    }`}
+                  />
+                  {utrError && <p className="text-[11px] font-black text-rose-600">{utrError}</p>}
+                </div>
+              </div>
+            )}
+
+            {paymentMode === "cod" && (
+              <div className="p-5 rounded-3xl bg-amber-50 border border-amber-200 space-y-1 text-xs text-amber-900">
+                <p className="font-bold flex items-center space-x-1.5">
+                  <Banknote className="w-4 h-4 text-amber-600" />
+                  <span>Cash on Delivery is Active!</span>
+                </p>
+                <p className="text-[11px] text-gray-600">
+                  Parcel receive karte samay delivery agent ko cash ya UPI se pay kar sakte hain.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* 2. SHIPPING & DELIVERY DETAILS FORM */}
           <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-100 shadow-sm space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center space-x-2.5">
@@ -396,8 +679,8 @@ export default function Payment() {
                   <MapPin className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-black text-slate-900 tracking-tight">1. Delivery Address</h2>
-                  <p className="text-[11px] text-slate-400 font-semibold">Jahan order dispatch kiya jayega</p>
+                  <h2 className="text-sm font-black text-slate-900 tracking-tight">2. Delivery Address</h2>
+                  <p className="text-[11px] text-slate-400 font-semibold">Jahan parcel dispatch kiya jayega</p>
                 </div>
               </div>
               {user && (
@@ -425,16 +708,15 @@ export default function Payment() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Mobile Number (WhatsApp) *
-                </label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">WhatsApp / Phone Number *</label>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="tel"
                     required
+                    maxLength={10}
                     name="phone"
-                    placeholder="10-digit mobile"
+                    placeholder="10-digit mobile number"
                     value={shipping.phone}
                     onChange={handleFormChange}
                     className="w-full pl-9 pr-3 py-2 bg-slate-50/70 border border-slate-200 focus:bg-white focus:border-pink-500 rounded-xl text-xs font-semibold outline-none transition"
@@ -443,16 +725,13 @@ export default function Payment() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Email (For Invoice Slip) *
-                </label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">Email Address (Optional)</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="email"
-                    required
                     name="email"
-                    placeholder="name@example.com"
+                    placeholder="email@example.com"
                     value={shipping.email}
                     onChange={handleFormChange}
                     className="w-full pl-9 pr-3 py-2 bg-slate-50/70 border border-slate-200 focus:bg-white focus:border-pink-500 rounded-xl text-xs font-semibold outline-none transition"
@@ -461,9 +740,7 @@ export default function Payment() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  House No., Building, Street Area *
-                </label>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">House No., Building, Street Area *</label>
                 <input
                   type="text"
                   required
@@ -503,247 +780,70 @@ export default function Payment() {
               </div>
             </div>
           </div>
-
-          {/* B. Interactive Payment Method Selector */}
-          <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-100 shadow-sm space-y-5">
-            <div className="flex items-center space-x-2.5 pb-3 border-b border-slate-100">
-              <div className="w-9 h-9 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
-                <CreditCard className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-sm font-black text-slate-900 tracking-tight">2. Select Payment Option</h2>
-                <p className="text-[11px] text-slate-400 font-semibold">
-                  Direct UPI QR transfer ya Cash on delivery
-                </p>
-              </div>
-            </div>
-
-            {/* Toggle Tabs */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setPaymentMode("upi")}
-                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center space-x-3 ${
-                  paymentMode === "upi"
-                    ? "border-pink-500 bg-pink-50/40 text-pink-700 ring-2 ring-pink-500/20 shadow-sm"
-                    : "border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700"
-                }`}
-              >
-                <div
-                  className={`p-2 rounded-xl ${
-                    paymentMode === "upi" ? "bg-pink-600 text-white" : "bg-white text-slate-600"
-                  }`}
-                >
-                  <QrCode className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black">UPI QR Instant Pay</h4>
-                  <p className="text-[10px] text-slate-400 font-semibold">GPay, PhonePe, Paytm, BHIM</p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (isCodEligible) setPaymentMode("cod");
-                  else alert("Cash on Delivery sirf ₹5,000 se upar ke order par uplabdh hai.");
-                }}
-                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center space-x-3 ${
-                  !isCodEligible
-                    ? "opacity-50 border-slate-200 bg-slate-100 cursor-not-allowed"
-                    : paymentMode === "cod"
-                    ? "border-emerald-500 bg-emerald-50/40 text-emerald-800 ring-2 ring-emerald-500/20 shadow-sm"
-                    : "border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700"
-                }`}
-              >
-                <div
-                  className={`p-2 rounded-xl ${
-                    paymentMode === "cod" ? "bg-emerald-600 text-white" : "bg-white text-slate-600"
-                  }`}
-                >
-                  <Banknote className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center space-x-1.5">
-                    <h4 className="text-xs font-black">Cash On Delivery</h4>
-                    {isCodEligible && (
-                      <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded">
-                        Eligible
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-slate-400 font-semibold">Orders &gt; ₹5,000 only</p>
-                </div>
-              </button>
-            </div>
-
-            {/* UPI QR Payment Detail View */}
-            {paymentMode === "upi" && (
-              <div className="p-5 rounded-3xl bg-gradient-to-br from-violet-50/60 via-pink-50/30 to-amber-50/40 border border-pink-100 space-y-4 animate-in fade-in duration-200">
-                <div className="flex flex-col sm:flex-row items-center gap-5">
-                  {/* Dynamic QR Box */}
-                  <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md text-center shrink-0">
-                    <img
-                      src={qrImage}
-                      alt="UPI QR Code"
-                      className="w-36 h-36 object-contain rounded-xl mx-auto"
-                      onError={(e) => {
-                        e.target.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-                          upiDeepLink
-                        )}`;
-                      }}
-                    />
-                    <span className="text-[10px] font-black text-slate-500 mt-1.5 block uppercase tracking-wider">
-                      Scan to Pay ₹{netPayable.toLocaleString()}
-                    </span>
-                  </div>
-
-                  {/* Merchant Details & Deep Link */}
-                  <div className="space-y-3 flex-1 text-center sm:text-left">
-                    <div>
-                      <span className="text-[10px] font-black uppercase tracking-wider text-pink-600">
-                        Merchant UPI VPA
-                      </span>
-                      <div className="flex items-center justify-center sm:justify-start space-x-2 mt-0.5">
-                        <code className="text-xs font-black text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                          {merchantUpi}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={handleCopyUpi}
-                          className="p-1.5 bg-white border border-slate-200 hover:bg-pink-50 text-slate-700 hover:text-pink-600 rounded-lg transition cursor-pointer"
-                          title="Copy UPI ID"
-                        >
-                          {copiedUpi ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-slate-400 font-semibold mt-1">Name: {merchantName}</p>
-                    </div>
-
-                    {/* Mobile 1-Click Pay Button */}
-                    <a
-                      href={upiDeepLink}
-                      className="inline-flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-pink-600 text-white font-extrabold text-xs rounded-xl shadow-md shadow-pink-500/20 hover:opacity-95 transition"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Tap to Pay on Mobile App</span>
-                    </a>
-                  </div>
-                </div>
-
-                {/* Mandatory UTR / Reference Input Box */}
-                <div className="pt-3 border-t border-pink-200/60">
-                  <label className="block text-xs font-black text-slate-900 uppercase tracking-wider mb-1">
-                    Enter Bank UTR / Reference No. (12 Digits) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={16}
-                    placeholder="e.g. 4289XXXXXXXX (Payment screenshot se 12-digit UTR)"
-                    value={utrNumber}
-                    onChange={(e) => {
-                      setUtrNumber(e.target.value.replace(/[^0-9a-zA-Z]/g, ""));
-                      setUtrError("");
-                    }}
-                    className={`w-full px-4 py-2.5 rounded-2xl text-xs font-black tracking-widest outline-none bg-white transition border ${
-                      utrError
-                        ? "border-rose-500 ring-2 ring-rose-500/20 text-rose-700"
-                        : "border-slate-200 focus:border-pink-500 focus:ring-4 focus:ring-pink-500/10 text-slate-900"
-                    }`}
-                  />
-                  {utrError && (
-                    <p className="text-[11px] font-bold text-rose-600 mt-1 flex items-center space-x-1">
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      <span>{utrError}</span>
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* COD Warning/Notice View */}
-            {paymentMode === "cod" && (
-              <div className="p-5 rounded-3xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-600 space-y-2">
-                <div className="flex items-center space-x-2">
-                  <Truck className="w-4 h-4 text-emerald-600" />
-                  <span className="font-bold text-slate-800">Cash On Delivery Policy</span>
-                </div>
-                {isCodEligible ? (
-                  <p className="text-emerald-700 font-bold">
-                    ✓ Aapka cart amount ₹5,000 se upar hai, isliye aapka order Cash On Delivery ke liye eligible hai. Delivery agent ko cash provide karein.
-                  </p>
-                ) : (
-                  <p className="text-rose-600 font-bold">
-                    ⚠️ COD sirf ₹5,000 se adhik ke orders par uplabdh hai. Aapka order amount ₹
-                    {itemsSubtotal.toLocaleString()} hai. Kripya UPI QR payment option select karein.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
         </div>
 
-        {/* Right Column: Sticky Summary, Items & Confirm Button (5 cols) */}
+        {/* Right Column: Order Summary, Dynamic GST, Dynamic Delivery, Coupon & Confirm */}
         <div className="lg:col-span-5 sticky top-24 space-y-5">
           <div className="bg-white p-6 sm:p-7 rounded-3xl border border-slate-100 shadow-xl shadow-pink-500/5 space-y-5">
             <h3 className="text-base font-black text-slate-900 tracking-tight pb-3 border-b border-slate-100 flex items-center justify-between">
               <span>Order Summary</span>
-              <span className="text-xs font-bold text-pink-600">{items.length} Product(s)</span>
+              <span className="text-xs font-bold text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full">
+                {items.length} Product(s)
+              </span>
             </h3>
 
-            {/* Selected Items List */}
-            <div className="max-h-60 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
-              {items.map((item, idx) => {
-                const img =
-                  item.image ||
-                  (Array.isArray(item.images) && item.images.length > 0
-                    ? typeof item.images[0] === "object"
-                      ? item.images[0].url
-                      : item.images[0]
-                    : "");
-                const itemPrice = Number(
-                  item.finalPrice !== undefined && item.finalPrice !== null
-                    ? item.finalPrice
-                    : calculateFinalPrice(item.price, item.discount)
+            {/* Items Scroller */}
+            <div className="max-h-60 overflow-y-auto space-y-3 pr-1 scrollbar-thin divide-y divide-slate-100">
+              {items.map((prod, idx) => {
+                const finalUnitPrice = Number(
+                  prod.finalPrice !== undefined && prod.finalPrice !== null
+                    ? prod.finalPrice
+                    : calculateFinalPrice(prod.price, prod.discount)
                 );
+                const thumb =
+                  prod.image ||
+                  (Array.isArray(prod.images) && prod.images.length > 0
+                    ? typeof prod.images[0] === "object"
+                      ? prod.images[0].url
+                      : prod.images[0]
+                    : "");
+                const qty = Number(prod.quantity || 1);
 
                 return (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-2xl border border-slate-100 text-xs"
-                  >
+                  <div key={idx} className="pt-3 first:pt-0 flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-3">
                       <img
-                        src={getImageUrl(img)}
-                        alt={item.name}
-                        className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0 bg-white"
+                        src={getImageUrl(thumb)}
+                        alt={prod.name}
+                        className="w-12 h-12 object-cover rounded-xl border border-slate-200 shrink-0 bg-white"
                         onError={(e) => {
                           e.target.src =
                             "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&q=80";
                         }}
                       />
                       <div className="max-w-[150px] sm:max-w-[180px]">
-                        <p className="font-extrabold text-slate-900 truncate">{item.name}</p>
-                        <p className="text-[11px] text-slate-400 font-semibold">
-                          Qty: {item.quantity || 1} × ₹{itemPrice.toLocaleString()}
-                        </p>
+                        <h4 className="font-extrabold text-slate-900 truncate">{prod.name}</h4>
+                        <div className="flex items-center space-x-1.5 mt-0.5">
+                          <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">
+                            {prod.category || "General"}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-semibold">
+                            Qty: {qty} × ₹{finalUnitPrice.toLocaleString()}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                    <span className="font-black text-slate-900 text-sm">
-                      ₹{(itemPrice * (item.quantity || 1)).toLocaleString()}
-                    </span>
+                    <div className="text-right font-black text-slate-900 text-sm">
+                      ₹{(finalUnitPrice * qty).toLocaleString()}
+                    </div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Dynamic Coupon Code Input & Applied Pill (Only Live Admin Coupons) */}
-            <div className="pt-2">
+            {/* Dynamic Coupon Code Input */}
+            <div className="pt-3 border-t border-slate-100 space-y-2">
+              <label className="block text-xs font-bold text-slate-700">Have a Promo Coupon?</label>
               {appliedCoupon ? (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs">
                   <div>
@@ -771,7 +871,7 @@ export default function Payment() {
                       <Tag className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
                       <input
                         type="text"
-                        placeholder="Enter Promo Coupon Code..."
+                        placeholder="Enter Promo Coupon..."
                         value={couponCode}
                         onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
                         className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-black uppercase outline-none focus:bg-white focus:border-pink-500"
@@ -800,31 +900,59 @@ export default function Payment() {
               )}
             </div>
 
-            {/* Bill Breakdown */}
-            <div className="space-y-2 pt-3 border-t border-slate-100 text-xs font-semibold text-slate-600">
+            {/* Final Bill Breakdown with Category GST & Category Delivery Fee */}
+            <div className="border-t border-slate-100 pt-3 space-y-2 text-xs font-semibold text-slate-600">
               <div className="flex justify-between">
                 <span>Items Subtotal</span>
                 <span className="font-bold text-slate-900">₹{itemsSubtotal.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between">
-                <span>GST (18% Calculated)</span>
-                <span className="font-bold text-slate-900">₹{gstAmount.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Delivery Charges</span>
-                <span className={deliveryFee === 0 ? "text-emerald-600 font-bold" : "font-bold text-slate-900"}>
-                  {deliveryFee === 0 ? "FREE" : `₹${deliveryFee}`}
-                </span>
-              </div>
+
               {couponDiscount > 0 && (
                 <div className="flex justify-between text-pink-600 font-bold">
                   <span>Coupon Discount</span>
                   <span>-₹{couponDiscount.toLocaleString()}</span>
                 </div>
               )}
-              <div className="flex justify-between items-baseline pt-3 border-t border-slate-100 text-sm">
+
+              {/* DYNAMIC GST ROW */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="flex items-center space-x-1.5">
+                    <Percent className="w-3.5 h-3.5 text-pink-600" />
+                    <span className="text-slate-800 font-bold">
+                      GST {gstInfo.rate > 0 ? `(${gstInfo.rate}%)` : "(0% Exempted)"}
+                    </span>
+                  </div>
+                  {gstInfo.appliedCategory && (
+                    <span className="block text-[10px] text-violet-600 font-semibold pl-5">
+                      Highest Active Tax Rule: '{gstInfo.appliedCategory}'
+                    </span>
+                  )}
+                </div>
+                <span className="font-bold text-slate-900">
+                  {gstAmount > 0 ? `+₹${gstAmount.toLocaleString()}` : "₹0"}
+                </span>
+              </div>
+
+              {/* DYNAMIC CATEGORY DELIVERY ROW */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="flex items-center space-x-1.5">
+                    <Truck className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-slate-800 font-bold">Delivery Charges</span>
+                  </div>
+                  <span className="block text-[10px] text-slate-400 font-medium pl-5">
+                    {deliveryInfo.ruleNote}
+                  </span>
+                </div>
+                <span className={deliveryFee === 0 ? "text-emerald-600 font-bold" : "font-bold text-slate-900"}>
+                  {deliveryFee === 0 ? "FREE" : `+₹${deliveryFee}`}
+                </span>
+              </div>
+
+              <div className="border-t border-slate-100 pt-3 flex justify-between items-baseline text-sm">
                 <span className="font-black text-slate-900 uppercase tracking-tight">Total Payable</span>
-                <span className="text-xl font-black bg-gradient-to-r from-violet-600 via-pink-600 to-amber-500 bg-clip-text text-transparent">
+                <span className="text-2xl font-black bg-gradient-to-r from-violet-600 via-pink-600 to-amber-500 bg-clip-text text-transparent">
                   ₹{netPayable.toLocaleString()}
                 </span>
               </div>

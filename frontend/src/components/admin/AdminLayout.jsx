@@ -6,6 +6,7 @@ import {
   ShoppingCart,
   Users,
   Tag,
+  Percent,
   QrCode,
   MessageSquareText,
   MessageSquare,
@@ -16,6 +17,7 @@ import {
   ChevronRight,
   Menu,
   X,
+  Truck,
   Sparkles,
   ExternalLink,
   LogOut,
@@ -39,19 +41,22 @@ export default function AdminLayout() {
   const brandSubtitle = settings?.navbar?.brandSubtitle || "Admin Management";
   const logoUrl = settings?.navbar?.logoUrl;
 
-  // Sabhi Admin Navigation Modules
+  // Sabhi Admin Navigation Modules (GST Engine included)
   const navItems = [
     { label: "Dashboard Overview", to: "/admin/dashboard", icon: LayoutDashboard },
     { label: "Products Catalog", to: "/admin/products", icon: Package },
     { label: "Orders & Delivery", to: "/admin/orders", icon: ShoppingCart },
     { label: "Customer Accounts", to: "/admin/users", icon: Users },
     { label: "Coupons & Discounts", to: "/admin/coupons", icon: Tag },
+    { label: "Category GST Engine", to: "/admin/gst", icon: Percent },
+    { label: "Category Shipping Engine", to: "/admin/delivery", icon: Truck },
     { label: "WhatsApp QR Scanner", to: "/admin/whatsapp-qr", icon: QrCode },
     { label: "WhatsApp Logs & Queue", to: "/admin/whatsapp", icon: MessageSquareText },
     { label: "Contact CRM Tickets", to: "/admin/contact-inquiries", icon: MessageSquare },
     { label: "Header, Footer & QR", to: "/admin/header-footer-cms", icon: Sliders },
     { label: "About Us CMS", to: "/admin/about-cms", icon: Info },
     { label: "Contact Us CMS", to: "/admin/contact-cms", icon: Layers }
+  
   ];
 
   const handleLogout = () => {
@@ -70,7 +75,7 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
-      {/* 1. TOP NAVBAR (Ab Admin pages par bhi dikhega) */}
+      {/* 1. TOP NAVBAR */}
       <Navbar />
 
       {/* 2. ADMIN MAIN CONTAINER WITH SIDEBAR */}
@@ -203,7 +208,7 @@ export default function AdminLayout() {
         {/* MAIN ADMIN PAGE CONTENT AREA                                              */}
         {/* ========================================================================= */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* Mobile Admin Sub-Bar (Sidebar menu toggle) */}
+          {/* Mobile Admin Sub-Bar */}
           <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
             <button
               onClick={() => setMobileOpen(true)}
@@ -223,7 +228,7 @@ export default function AdminLayout() {
         </div>
       </div>
 
-      {/* 3. BOTTOM FOOTER (Ab Admin pages par bhi dikhega) */}
+      {/* 3. BOTTOM FOOTER */}
       <Footer />
     </div>
   );

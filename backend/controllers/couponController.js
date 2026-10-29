@@ -35,19 +35,28 @@ exports.createCoupon = async (req, res) => {
     } = req.body;
 
     if (!code || !discountValue) {
-      return res.status(400).json({ success: false, message: "Coupon Code aur Discount Value anivarya hain." });
+      return res.status(400).json({
+        success: false,
+        message: "Coupon Code aur Discount Value anivarya hain."
+      });
     }
 
     const cleanCode = code.trim().toUpperCase();
 
-    // Check duplicate code in this store
-    const existing = await Coupon.findOne({ tenant: tenantId, code: cleanCode });
+    // Check duplicate code in this store/tenant
+    const query = { code: cleanCode };
+    if (tenantId) query.tenant = tenantId;
+
+    const existing = await Coupon.findOne(query);
     if (existing) {
-      return res.status(400).json({ success: false, message: `Coupon code '${cleanCode}' pehle se exist karta hai.` });
+      return res.status(400).json({
+        success: false,
+        message: `Coupon code '${cleanCode}' pehle se exist karta hai.`
+      });
     }
 
     const newCoupon = await Coupon.create({
-      tenant: tenantId,
+      tenant: tenantId || null,
       code: cleanCode,
       description: description || "",
       discountType: discountType || "percentage",
@@ -57,6 +66,7 @@ exports.createCoupon = async (req, res) => {
       applicableCategory: applicableCategory || "All",
       expiryDate: expiryDate ? new Date(expiryDate) : null,
       usageLimit: Number(usageLimit) || 0,
+      usedCount: 0,
       isActive: isActive !== undefined ? Boolean(isActive) : true
     });
 
@@ -80,7 +90,9 @@ exports.updateCoupon = async (req, res) => {
     if (tenantId) query.tenant = tenantId;
 
     const coupon = await Coupon.findOne(query);
-    if (!coupon) return res.status(404).json({ success: false, message: "Coupon nahi mila." });
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: "Coupon nahi mila." });
+    }
 
     if (req.body.code) coupon.code = req.body.code.trim().toUpperCase();
     if (req.body.description !== undefined) coupon.description = req.body.description;
@@ -110,7 +122,9 @@ exports.toggleCouponStatus = async (req, res) => {
     if (tenantId) query.tenant = tenantId;
 
     const coupon = await Coupon.findOne(query);
-    if (!coupon) return res.status(404).json({ success: false, message: "Coupon nahi mila." });
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: "Coupon nahi mila." });
+    }
 
     coupon.isActive = !coupon.isActive;
     await coupon.save();
@@ -135,7 +149,9 @@ exports.deleteCoupon = async (req, res) => {
     if (tenantId) query.tenant = tenantId;
 
     const coupon = await Coupon.findOneAndDelete(query);
-    if (!coupon) return res.status(404).json({ success: false, message: "Coupon nahi mila." });
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: "Coupon nahi mila." });
+    }
 
     return res.status(200).json({ success: true, message: "Coupon delete kar diya gaya." });
   } catch (error) {
@@ -144,15 +160,18 @@ exports.deleteCoupon = async (req, res) => {
 };
 
 // =========================================================================
-// 6. VALIDATE COUPON FOR PAYMENT PAGE (Category-Wise + Live Check)
+// 6. VALIDATE COUPON FOR PAYMENT PAGE (Category-Wise + Dual Payload Check)
 // =========================================================================
 exports.validateCoupon = async (req, res) => {
   try {
     const tenantId = req.tenant?._id;
-    const { code, items, totalAmount } = req.body;
+    const { code, items, totalAmount, cartSubtotal } = req.body;
 
-    if (!code) {
-      return res.status(400).json({ success: false, message: "Kripya coupon code enter karein." });
+    if (!code || typeof code !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Kripya coupon code enter karein."
+      });
     }
 
     const cleanCode = code.trim().toUpperCase();
@@ -162,41 +181,54 @@ exports.validateCoupon = async (req, res) => {
     const coupon = await Coupon.findOne(query);
 
     if (!coupon) {
-      return res.status(404).json({ success: false, message: "Coupon code galat hai ya exist nahi karta." });
+      return res.status(404).json({
+        success: false,
+        message: "Coupon code galat hai ya exist nahi karta."
+      });
     }
 
     // Check 1: Active Status
     if (!coupon.isActive) {
-      return res.status(400).json({ success: false, message: "Yeh coupon abhi disabled/inactive hai." });
+      return res.status(400).json({
+        success: false,
+        message: "Yeh coupon abhi disabled/inactive hai."
+      });
     }
 
     // Check 2: Expiry Date
     if (coupon.expiryDate && new Date(coupon.expiryDate) < new Date()) {
-      return res.status(400).json({ success: false, message: "Yeh coupon expire ho chuka hai." });
+      return res.status(400).json({
+        success: false,
+        message: "Yeh coupon expire ho chuka hai."
+      });
     }
 
     // Check 3: Usage Limit
     if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
-      return res.status(400).json({ success: false, message: "Is coupon ki maximum redemption limit poori ho chuki hai." });
-    }
-
-    // Check 4: Minimum Order Value Check
-    const cartTotal = Number(totalAmount) || 0;
-    if (coupon.minOrderAmount > 0 && cartTotal < coupon.minOrderAmount) {
       return res.status(400).json({
         success: false,
-        message: `Is coupon ko use karne ke liye kam se kam ₹${coupon.minOrderAmount.toLocaleString()} ka order hona zaroori hai.`
+        message: "Is coupon ki maximum redemption limit poori ho chuki hai."
+      });
+    }
+
+    // Safe Numeric Total (Dono key formats 'totalAmount' aur 'cartSubtotal' support karta hai)
+    const effectiveTotal = Number(totalAmount !== undefined ? totalAmount : cartSubtotal) || 0;
+    const minOrder = Number(coupon.minOrderAmount || coupon.minPurchaseAmount || 0);
+
+    // Check 4: Minimum Order Value Check
+    if (minOrder > 0 && effectiveTotal < minOrder) {
+      return res.status(400).json({
+        success: false,
+        message: `Is coupon ko use karne ke liye kam se kam ₹${minOrder.toLocaleString()} ka order hona zaroori hai.`
       });
     }
 
     // Check 5: Category-Wise Verification
-    let eligibleSubtotal = 0;
+    let eligibleSubtotal = effectiveTotal;
     const targetCat = coupon.applicableCategory;
 
     if (Array.isArray(items) && items.length > 0) {
-      if (!targetCat || targetCat === "All") {
-        eligibleSubtotal = items.reduce((acc, it) => acc + (Number(it.finalPrice || it.price) * (it.quantity || 1)), 0);
-      } else {
+      if (targetCat && targetCat.toLowerCase() !== "all") {
         const matchingItems = items.filter(
           (it) => it.category && it.category.toLowerCase() === targetCat.toLowerCase()
         );
@@ -208,25 +240,36 @@ exports.validateCoupon = async (req, res) => {
           });
         }
 
-        eligibleSubtotal = matchingItems.reduce(
-          (acc, it) => acc + (Number(it.finalPrice || it.price) * (it.quantity || 1)),
-          0
-        );
+        eligibleSubtotal = matchingItems.reduce((acc, it) => {
+          const itemPrice = Number(it.finalPrice || it.price || 0);
+          const itemQty = Number(it.quantity || 1);
+          return acc + itemPrice * itemQty;
+        }, 0);
+      } else {
+        eligibleSubtotal = items.reduce((acc, it) => {
+          const itemPrice = Number(it.finalPrice || it.price || 0);
+          const itemQty = Number(it.quantity || 1);
+          return acc + itemPrice * itemQty;
+        }, 0);
       }
-    } else {
-      eligibleSubtotal = cartTotal;
     }
 
-    // Calculate Discount Amount
+    // Check 6: Dynamic Discount Calculation
     let discount = 0;
     if (coupon.discountType === "percentage") {
-      discount = Math.round((eligibleSubtotal * coupon.discountValue) / 100);
-      if (coupon.maxDiscountAmount > 0 && discount > coupon.maxDiscountAmount) {
-        discount = coupon.maxDiscountAmount;
+      discount = Math.round((eligibleSubtotal * Number(coupon.discountValue)) / 100);
+      const maxCap = Number(coupon.maxDiscountAmount || 0);
+      if (maxCap > 0 && discount > maxCap) {
+        discount = maxCap;
       }
     } else {
       // Flat Discount
-      discount = Math.min(coupon.discountValue, eligibleSubtotal);
+      discount = Math.min(Number(coupon.discountValue || 0), eligibleSubtotal);
+    }
+
+    // Discount total se zyada na ho
+    if (discount > effectiveTotal) {
+      discount = effectiveTotal;
     }
 
     return res.status(200).json({
@@ -235,9 +278,10 @@ exports.validateCoupon = async (req, res) => {
       data: {
         code: coupon.code,
         discountAmount: discount,
-        applicableCategory: coupon.applicableCategory,
+        applicableCategory: coupon.applicableCategory || "All",
         discountType: coupon.discountType,
-        discountValue: coupon.discountValue
+        discountValue: coupon.discountValue,
+        minOrderAmount: minOrder
       }
     });
   } catch (error) {

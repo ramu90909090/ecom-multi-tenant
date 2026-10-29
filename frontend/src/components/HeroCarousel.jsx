@@ -1,21 +1,12 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { ChevronLeft, ChevronRight, Sparkles, ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
-  ArrowRight,
-  Flame,
-  Zap,
-  Tag,
-  ShieldCheck
-} from "lucide-react";
 import { getImageUrl } from "../utils/productUtils";
 
-// Default Curated High-Res Slides (Fallback & Variety Pool)
+// Static fallback slides (Tabhi dikhenge jab backend se koi product nahi aayega)
 const DEFAULT_HERO_SLIDES = [
   {
-    id: "hero-1",
+    id: "static-1",
     badge: "Direct Warehouse Dispatch",
     badgeColor: "from-amber-400 to-orange-500",
     titlePrefix: "Next-Gen Audio &",
@@ -23,11 +14,11 @@ const DEFAULT_HERO_SLIDES = [
     desc: "Experience high-fidelity wireless sound aur active noise cancellation at direct-to-consumer prices.",
     image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=1200&q=80",
     tagText: "Up to 45% OFF",
-    link: "/products?category=Electronics",
+    link: "/products",
     btnText: "Shop Audio Gear"
   },
   {
-    id: "hero-2",
+    id: "static-2",
     badge: "Curated Style Edit 2026",
     badgeColor: "from-pink-500 to-rose-600",
     titlePrefix: "Premium Lifestyle &",
@@ -35,229 +26,141 @@ const DEFAULT_HERO_SLIDES = [
     desc: "100% genuine breathable fabrics aur modern fits designed for pan-India trends.",
     image: "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=1200&q=80",
     tagText: "Trending Drops",
-    link: "/products?category=Fashion",
-    btnText: "Explore Wardrobe"
-  },
-  {
-    id: "hero-3",
-    badge: "Flagship Precision",
-    badgeColor: "from-blue-500 to-cyan-500",
-    titlePrefix: "Smart Fitness &",
-    titleHighlight: "AMOLED Watches",
-    desc: "Real-time health monitoring, Bluetooth calling aur 7-day extended battery life.",
-    image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1200&q=80",
-    tagText: "Verified Warranty",
     link: "/products",
-    btnText: "View Watches"
-  },
-  {
-    id: "hero-4",
-    badge: "Active Performance",
-    badgeColor: "from-emerald-500 to-teal-600",
-    titlePrefix: "Cushioned Comfort",
-    titleHighlight: "Athletic Sneakers",
-    desc: "Ergonomic arch support aur ultra-light rubber outsoles everyday running ke liye.",
-    image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1200&q=80",
-    tagText: "Best Value",
-    link: "/products?category=Footwear",
-    btnText: "Shop Footwear"
-  },
-  {
-    id: "hero-5",
-    badge: "Home & Modern Living",
-    badgeColor: "from-violet-500 to-purple-600",
-    titlePrefix: "Aesthetic Decors &",
-    titleHighlight: "Workspace Upgrades",
-    desc: "Minimalist lighting aur desk accessories jo aapke daily routine ko elevate karein.",
-    image: "https://images.unsplash.com/photo-1513519245088-0e12902e5a38?auto=format&fit=crop&w=1200&q=80",
-    tagText: "New Arrivals",
-    link: "/products?category=Home",
-    btnText: "Discover Living"
+    btnText: "Explore Wardrobe"
   }
 ];
 
-export default function HeroCarousel({ products = [], storeName = "KHASTORE" }) {
-  const [slides, setSlides] = useState(DEFAULT_HERO_SLIDES);
+export default function HeroCarousel({ products = [], autoSlideInterval = 2500 }) {
   const [current, setCurrent] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-
-  // Touch Swipe Refs
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
 
-  // Randomize & Build 5 Interactive Slides on Component Mount/Refresh
-  useEffect(() => {
-    let pool = [...DEFAULT_HERO_SLIDES];
-
-    // Agar backend me live products hain, toh unme se image wale products add karein
+  // Dynamic Slides: Backend se random products pick honge, agar empty hain tabhi static fallback aayega
+  const slides = useMemo(() => {
     if (products && products.length > 0) {
-      const productSlides = products
-        .filter((p) => (p.images && p.images.length > 0) || p.image)
-        .slice(0, 5)
-        .map((p, i) => {
-          const imgUrl = p.images?.[0]?.url || p.images?.[0] || p.image;
-          return {
-            id: `prod-${p._id || p.id || i}`,
-            badge: p.isTrending ? "Trending Best Seller" : "Direct From Warehouse",
-            badgeColor: p.isTrending ? "from-orange-500 to-amber-500" : "from-violet-600 to-pink-600",
-            titlePrefix: p.name?.slice(0, 24) || "Premium Selection",
-            titleHighlight: `${p.discount ? `${p.discount}% Off` : "Verified Deal"}`,
-            desc: p.description?.slice(0, 110) || "Authentic quality assured with express delivery.",
-            image: getImageUrl(imgUrl),
-            tagText: p.price ? `₹${(p.finalPrice || p.price).toLocaleString()}` : "Special Price",
-            link: `/product/${p._id || p.id}`,
-            btnText: "Buy Now"
-          };
-        });
-
-      pool = [...productSlides, ...DEFAULT_HERO_SLIDES];
+      // Backend products ko randomly shuffle karke top 5 items pick karte hain
+      const randomized = [...products].sort(() => 0.5 - Math.random()).slice(0, 5);
+      return randomized.map((p, idx) => {
+        const imgUrl = p.images?.[0]?.url || p.images?.[0] || p.image;
+        return {
+          id: p._id || p.id || `prod-${idx}`,
+          badge: p.isTrending ? "Trending Best Seller" : `${p.category || "Featured"} Collection`,
+          badgeColor: "from-violet-600 to-pink-600",
+          titlePrefix: p.name || "Exclusive Item",
+          titleHighlight: p.discount ? `${p.discount}% OFF` : `₹${p.sellingPrice || p.price || "Deal"}`,
+          desc: p.description || "Authentic quality assured with express nationwide shipping.",
+          image: getImageUrl(imgUrl),
+          tagText: p.sellingPrice ? `₹${p.sellingPrice}` : "Best Offer",
+          link: `/products`,
+          btnText: "Explore Now"
+        };
+      });
     }
-
-    // Shuffle Array Randomly
-    const shuffled = pool.sort(() => 0.5 - Math.random()).slice(0, 5);
-    setSlides(shuffled);
+    // Agar backend empty hai toh static fallback return hoga
+    return DEFAULT_HERO_SLIDES;
   }, [products]);
 
-  // Autoplay Slider Loop (every 5 seconds)
+  // Fast Auto-slide Timer
   useEffect(() => {
-    if (isPaused || slides.length === 0) return;
-    const interval = setInterval(() => {
-      setCurrent((prev) => (prev + 1) % slides.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [isPaused, slides.length]);
+    if (isPaused || slides.length <= 1) return;
+    const timer = setInterval(() => {
+      setCurrent((prev) => (prev === slides.length - 1 ? 0 : prev + 1));
+    }, autoSlideInterval);
+    return () => clearInterval(timer);
+  }, [isPaused, slides.length, autoSlideInterval]);
 
-  const handlePrev = () => {
-    setCurrent((prev) => (prev - 1 + slides.length) % slides.length);
-  };
-
-  const handleNext = () => {
-    setCurrent((prev) => (prev + 1) % slides.length);
-  };
-
-  // Touch Handling for Mobile
-  const handleTouchStart = (e) => {
-    touchStartX.current = e.touches[0].clientX;
-  };
-
-  const handleTouchMove = (e) => {
-    touchEndX.current = e.touches[0].clientX;
-  };
-
-  const handleTouchEnd = () => {
-    const diff = touchStartX.current - touchEndX.current;
-    if (diff > 50) handleNext();
-    if (diff < -50) handlePrev();
-  };
+  const prevSlide = () => setCurrent(current === 0 ? slides.length - 1 : current - 1);
+  const nextSlide = () => setCurrent(current === slides.length - 1 ? 0 : current + 1);
 
   if (!slides || slides.length === 0) return null;
 
   return (
     <div
-      className="relative rounded-3xl overflow-hidden shadow-2xl bg-slate-950 text-white select-none group"
+      className="relative w-full h-[240px] sm:h-[340px] md:h-[380px] rounded-3xl overflow-hidden shadow-xl group select-none bg-slate-950"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
+      onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+      onTouchMove={(e) => { touchEndX.current = e.touches[0].clientX; }}
+      onTouchEnd={() => {
+        const distance = touchStartX.current - touchEndX.current;
+        if (distance > 50) nextSlide();
+        if (distance < -50) prevSlide();
+      }}
     >
-      {/* Slides Viewport */}
-      <div className="relative h-[420px] sm:h-[480px] lg:h-[500px] w-full overflow-hidden">
-        {slides.map((slide, index) => {
-          const isActive = index === current;
-          return (
-            <div
-              key={slide.id || index}
-              className={`absolute inset-0 transition-opacity duration-700 ease-in-out ${
-                isActive ? "opacity-100 z-10" : "opacity-0 pointer-events-none z-0"
-              }`}
-            >
-              {/* Background Cover Image with Modern Ambient Overlays */}
-              <img
-                src={slide.image}
-                alt={slide.titlePrefix}
-                className="w-full h-full object-cover object-center transform scale-105 group-hover:scale-100 transition-transform duration-1000"
-                onError={(e) => {
-                  e.currentTarget.src =
-                    "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=1200&q=80";
-                }}
-              />
+      {slides.map((slide, index) => (
+        <div
+          key={slide.id || index}
+          className={`absolute inset-0 transition-opacity duration-500 ease-in-out ${
+            index === current ? "opacity-100 z-10 scale-100" : "opacity-0 z-0 pointer-events-none scale-105"
+          }`}
+        >
+          <img
+            src={slide.image}
+            alt={slide.titlePrefix}
+            className="w-full h-full object-cover"
+            loading={index === 0 ? "eager" : "lazy"}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-slate-950/85 via-slate-900/60 to-transparent" />
 
-              {/* Dark Gradient Glass Overlay */}
-              <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/80 to-transparent lg:w-3/4" />
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-transparent sm:hidden" />
+          <div className="absolute inset-0 flex flex-col justify-end sm:justify-center p-5 sm:p-8 max-w-xl text-white">
+            <span className="inline-flex items-center space-x-1 w-fit px-2.5 py-0.5 bg-white/20 backdrop-blur-md text-amber-300 font-bold text-[10px] uppercase rounded-full mb-1.5 border border-white/20">
+              <Sparkles className="w-3 h-3" />
+              <span>{slide.badge}</span>
+            </span>
 
-              {/* Slide Content Box */}
-              <div className="absolute inset-0 flex flex-col justify-center px-6 sm:px-12 lg:px-16 max-w-2xl z-20 space-y-4 sm:space-y-5">
-                {/* Micro Badge */}
-                <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-xs font-black uppercase tracking-wider w-fit">
-                  <span
-                    className={`w-2 h-2 rounded-full bg-gradient-to-r ${slide.badgeColor || "from-pink-500 to-amber-400"} animate-pulse`}
-                  />
-                  <span className="text-pink-300 font-mono text-[11px]">{slide.badge}</span>
-                </div>
+            <h2 className="text-base sm:text-2xl md:text-3xl font-black tracking-tight mb-1.5 drop-shadow-md line-clamp-1">
+              {slide.titlePrefix}
+            </h2>
 
-                {/* Main Heading */}
-                <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight text-white">
-                  {slide.titlePrefix} <br />
-                  <span className="bg-gradient-to-r from-violet-400 via-pink-400 to-amber-300 bg-clip-text text-transparent">
-                    {slide.titleHighlight}
-                  </span>
-                </h1>
+            <p className="text-pink-300 font-bold text-xs sm:text-sm mb-2">
+              {slide.titleHighlight}
+            </p>
 
-                {/* Subtitle Description */}
-                <p className="text-xs sm:text-sm text-slate-300 line-clamp-2 max-w-lg leading-relaxed font-normal">
-                  {slide.desc}
-                </p>
+            <p className="text-slate-200 text-xs sm:text-xs mb-3 line-clamp-2">
+              {slide.desc}
+            </p>
 
-                {/* Tag Pill & CTA Action */}
-                <div className="pt-2 flex flex-wrap items-center gap-3">
-                  <Link
-                    to={slide.link || "/products"}
-                    className="inline-flex items-center space-x-2 px-6 py-3.5 bg-gradient-to-r from-violet-600 via-pink-600 to-amber-500 hover:opacity-95 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-pink-500/25 active:scale-95 transition"
-                  >
-                    <span>{slide.btnText || "Explore Catalog"}</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </Link>
-
-                  <span className="px-3.5 py-2.5 bg-white/15 backdrop-blur-md border border-white/20 text-amber-300 rounded-2xl text-xs font-black tracking-wide">
-                    {slide.tagText}
-                  </span>
-                </div>
-              </div>
+            <div>
+              <Link
+                to={slide.link || "/products"}
+                className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-lg transition"
+              >
+                <span>{slide.btnText || "Shop Now"}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        </div>
+      ))}
 
-      {/* Slider Left / Right Navigation Buttons */}
+      {/* Navigation Controls */}
       <button
-        onClick={handlePrev}
+        onClick={prevSlide}
         aria-label="Previous Slide"
-        className="absolute left-3 sm:left-6 top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-2xl bg-slate-900/60 hover:bg-slate-900/90 text-white backdrop-blur-md border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer shadow-lg active:scale-90"
+        className="hidden group-hover:flex absolute left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-white/30 backdrop-blur-md hover:bg-white text-white hover:text-slate-900 rounded-full items-center justify-center transition shadow-md cursor-pointer"
       >
-        <ChevronLeft className="w-5 h-5" />
+        <ChevronLeft className="w-4 h-4" />
       </button>
 
       <button
-        onClick={handleNext}
+        onClick={nextSlide}
         aria-label="Next Slide"
-        className="absolute right-3 sm:right-6 top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-2xl bg-slate-900/60 hover:bg-slate-900/90 text-white backdrop-blur-md border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer shadow-lg active:scale-90"
+        className="hidden group-hover:flex absolute right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-white/30 backdrop-blur-md hover:bg-white text-white hover:text-slate-900 rounded-full items-center justify-center transition shadow-md cursor-pointer"
       >
-        <ChevronRight className="w-5 h-5" />
+        <ChevronRight className="w-4 h-4" />
       </button>
 
-      {/* Interactive Dots / Progress Bar */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center space-x-2 bg-slate-950/60 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15">
+      {/* Dots Indicator */}
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center space-x-1.5 bg-black/30 backdrop-blur-md px-3 py-1 rounded-full">
         {slides.map((_, i) => (
           <button
             key={i}
             onClick={() => setCurrent(i)}
             aria-label={`Go to slide ${i + 1}`}
             className={`transition-all duration-300 rounded-full cursor-pointer ${
-              current === i
-                ? "w-7 h-2 bg-gradient-to-r from-pink-500 to-amber-400 shadow-sm"
-                : "w-2 h-2 bg-white/40 hover:bg-white/80"
+              current === i ? "w-5 h-1.5 bg-white" : "w-1.5 h-1.5 bg-white/50"
             }`}
           />
         ))}

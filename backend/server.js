@@ -27,6 +27,8 @@ const orderRoutes = require("./routes/orderRoutes");
 const userRoutes = require("./routes/userRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 const couponRoutes = require("./routes/couponRoutes");
+const gstRoutes = require("./routes/gstRoutes");
+const deliveryRoutes = require("./routes/deliveryRoutes");
 
 // WhatsApp Engine & Background Message Queue Services
 const whatsappService = require("./services/whatsappService");
@@ -40,7 +42,7 @@ connectDB();
 
 const app = express();
 
-// Trust Proxy for multi-tenant subdomains & reverse proxy
+// Trust Proxy for multi-tenant subdomains & reverse proxy (Nginx, Cloudflare)
 app.set("trust proxy", 1);
 
 // 1. Security Headers with Cross-Origin Resource Policy for Uploaded Images
@@ -64,6 +66,7 @@ const allowedHeadersList = [
 
 const corsOptions = {
   origin: (origin, callback) => {
+    // Mobile apps, Postman ya server-to-server calls allow karein (origin undefined hota hai)
     if (!origin) return callback(null, true);
 
     try {
@@ -79,6 +82,7 @@ const corsOptions = {
         return callback(null, true);
       }
 
+      // Dynamic subdomains aur production custom domains ko allow karein
       return callback(null, true);
     } catch (err) {
       return callback(new Error("CORS validation failed"));
@@ -89,7 +93,7 @@ const corsOptions = {
   allowedHeaders: allowedHeadersList
 };
 
-// Global CORS Middleware (Preflight OPTIONS requests ko khud handle karta hai)
+// Global CORS Middleware (Preflight OPTIONS requests ko handle karta hai)
 app.use(cors(corsOptions));
 
 // 3. Rate Limiting (Relaxed for Development & High Dashboard Activity)
@@ -159,7 +163,7 @@ app.use((req, res, next) => {
 // 7. Parameter Pollution Prevention
 app.use(hpp());
 
-// 8. Static Files Serving
+// 8. Static Files Serving (Product images, logos & payment QR images)
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // 9. Multi-Tenant Resolver Middleware
@@ -176,6 +180,8 @@ app.use("/api/v1/orders", orderRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/whatsapp", whatsappRoutes);
 app.use("/api/v1/coupons", couponRoutes);
+app.use("/api/v1/gst", gstRoutes);
+app.use("/api/v1/delivery", deliveryRoutes);
 
 // 11. Health Check Endpoint
 app.get("/health", (req, res) => {
@@ -208,7 +214,7 @@ app.listen(PORT, () => {
   console.log(`📁 Static files serving at: http://localhost:${PORT}/uploads`);
   console.log(`🔗 Multi-Tenant Support: Enabled for all subdomains & origins`);
 
-  // A. Resume Pending Email Queue
+  // A. Resume / Process Pending Email Queue on Server Startup
   try {
     if (typeof processEmailQueue === "function") {
       processEmailQueue();
@@ -217,7 +223,7 @@ app.listen(PORT, () => {
     console.warn("⚠️ Email Queue Startup Warning:", err.message);
   }
 
-  // B. Initialize WhatsApp Service & Resume Queue
+  // B. Initialize WhatsApp Service & Resume WhatsApp Message Queue
   try {
     if (
       whatsappService &&

@@ -8,7 +8,7 @@ import { SettingsProvider } from "./context/SettingsContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import NotFound from "./pages/NotFound";
 
-// Layout & Navigation Components
+// Components
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -26,21 +26,21 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 
-// User Protected Dashboard
+// User Dashboard (Customer Panel)
 import UserDashboard from "./pages/user/UserDashboard";
 
-// Admin CMS, CRM & Management Pages
+// Admin CMS & CRM Pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
+import AboutPageCms from "./pages/admin/AboutPageCms";
+import ContactPageCms from "./pages/admin/ContactPageCms";
+import ContactInquiries from "./pages/admin/ContactInquiries";
 import ManageProducts from "./pages/admin/ManageProducts";
+import HeaderFooterCms from "./pages/admin/HeaderFooterCms";
 import AdminOrders from "./pages/admin/AdminOrders";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminCoupons from "./pages/admin/AdminCoupons";
 import AdminWhatsAppQR from "./pages/admin/AdminWhatsAppQR";
 import AdminWhatsappLogs from "./pages/admin/AdminWhatsappLogs";
-import ContactInquiries from "./pages/admin/ContactInquiries";
-import HeaderFooterCms from "./pages/admin/HeaderFooterCms";
-import AboutPageCms from "./pages/admin/AboutPageCms";
-import ContactPageCms from "./pages/admin/ContactPageCms";
 
 export default function App() {
   return (
@@ -50,13 +50,11 @@ export default function App() {
           <CartProvider>
             <Router>
               <Routes>
-                {/* ========================================================= */}
-                {/* 1. ADMIN STUDIO CONTROL HUB (Protected for Admin/Manager) */}
-                {/* ========================================================= */}
+                {/* 1. Admin Control Hub */}
                 <Route
                   path="/admin"
                   element={
-                    <ProtectedRoute allowedRoles={["admin", "manager"]}>
+                    <ProtectedRoute allowedRoles={["admin"]}>
                       <AdminLayout />
                     </ProtectedRoute>
                   }
@@ -76,27 +74,7 @@ export default function App() {
                   <Route path="*" element={<NotFound />} />
                 </Route>
 
-                {/* ========================================================= */}
-                {/* 2. USER PROTECTED DASHBOARD                               */}
-                {/* ========================================================= */}
-                <Route
-                  path="/user/dashboard"
-                  element={
-                    <ProtectedRoute allowedRoles={["user", "admin"]}>
-                      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-                        <Navbar />
-                        <main className="flex-1">
-                          <UserDashboard />
-                        </main>
-                        <Footer />
-                      </div>
-                    </ProtectedRoute>
-                  }
-                />
-
-                {/* ========================================================= */}
-                {/* 3. PUBLIC STOREFRONT (Shared Layout with Navbar & Footer) */}
-                {/* ========================================================= */}
+                {/* 2. Public Storefront Layout */}
                 <Route
                   path="*"
                   element={
@@ -114,6 +92,28 @@ export default function App() {
                           <Route path="/login" element={<Login />} />
                           <Route path="/register" element={<Register />} />
                           <Route path="/forgot-password" element={<ForgotPassword />} />
+
+                          {/* ✅ YEH USER DASHBOARD ROUTE HAI (Dono roles ke liye allowed) */}
+                          <Route
+                            path="/dashboard"
+                            element={
+                              <ProtectedRoute allowedRoles={["user", "admin"]}>
+                                <UserDashboard />
+                              </ProtectedRoute>
+                            }
+                          />
+
+                          {/* Alternate Fallback: Agar navbar me /orders ya /user-dashboard link ho */}
+                          <Route
+                            path="/user-dashboard"
+                            element={
+                              <ProtectedRoute allowedRoles={["user", "admin"]}>
+                                <UserDashboard />
+                              </ProtectedRoute>
+                            }
+                          />
+
+                          {/* Catch-all 404 Page */}
                           <Route path="*" element={<NotFound />} />
                         </Routes>
                       </main>
